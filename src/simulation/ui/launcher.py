@@ -1,15 +1,15 @@
 import pygame
-import sys
-import os
+import yaml
 from pathlib import Path
-from typing import List, Any, Callable, Tuple
+from typing import List, Dict
 
 # Design Constants
-WINDOW_SIZE = (420, 360) # Slightly taller for breathing room
+WINDOW_SIZE = (440, 400) # Slightly taller for breathing room
 COLOR_BG = (15, 15, 20)        # Very dark blue-grey
 COLOR_BORDER = (40, 45, 50)    
 COLOR_HEADER = (255, 255, 255)
 COLOR_LABEL = (120, 130, 140)  # Muted
+COLOR_PANEL = (20, 25, 30)
 COLOR_INPUT_BG = (25, 30, 35)
 COLOR_INPUT_BORDER = (45, 50, 55)
 COLOR_ACCENT = (0, 200, 100)   # Vivid Green
@@ -17,8 +17,10 @@ COLOR_TEXT = (220, 220, 220)
 COLOR_HINT = (80, 90, 100)
 
 FONT_SIZE_HEADER = 20
+FONT_SIZE_TITLE = 16
 FONT_SIZE_LABEL = 12
 FONT_SIZE_BODY = 14
+FONT_SIZE_DESC = 11
 
 class Widget:
     def __init__(self, x, y, w, h):
@@ -120,6 +122,104 @@ class Dropdown(Widget):
             (ax - 5, ay - 3), (ax + 5, ay - 3), (ax, ay + 4)
         ])
 
+class ScenarioCarousel(Widget):
+    def __init__(self, x, y, w, h, label, scenarios: List[Dict[str, str]]):
+        super().__init__(x, y, w, h)
+        self.label = label
+        self.scenarios = scenarios
+        self.index = 0
+
+    def get_value(self):
+        if 0 <= self.index < len(self.scenarios):
+            return self.scenarios[self.index]['name']
+        return "default"
+
+    def get_description(self):
+        if 0 <= self.index < len(self.scenarios):
+            return self.scenarios[self.index]['description']
+        return "Default scenario configuration."
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if self.rect.collidepoint(event.pos):
+                left_rect, right_rect = self._arrow_rects()
+                if left_rect.collidepoint(event.pos):
+                    self.index = (self.index - 1) % len(self.scenarios)
+                elif right_rect.collidepoint(event.pos):
+                    self.index = (self.index + 1) % len(self.scenarios)
+                else:
+                    self.index = (self.index + 1) % len(self.scenarios)
+                self.focused = True
+                self.active = True
+            else:
+                self.focused = False
+                self.active = False
+        elif event.type == pygame.KEYDOWN and self.focused:
+            if event.key == pygame.K_LEFT:
+                self.index = (self.index - 1) % len(self.scenarios)
+            elif event.key == pygame.K_RIGHT:
+                self.index = (self.index + 1) % len(self.scenarios)
+
+    def _arrow_rects(self):
+        size = 20
+        left_rect = pygame.Rect(self.rect.x + 10, self.rect.centery - size // 2, size, size)
+        right_rect = pygame.Rect(self.rect.right - 10 - size, self.rect.centery - size // 2, size, size)
+        return left_rect, right_rect
+
+    def _wrap_text(self, text, font, max_width):
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            test = f"{current} {word}".strip()
+            if font.size(test)[0] <= max_width:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines
+
+    def draw(self, screen, fonts):
+        lbl = fonts['label'].render(self.label.upper(), True, COLOR_LABEL)
+        screen.blit(lbl, (self.rect.x, self.rect.y - 18))
+
+        color_border = COLOR_ACCENT if self.focused else COLOR_INPUT_BORDER
+        pygame.draw.rect(screen, COLOR_PANEL, self.rect, border_radius=6)
+        pygame.draw.rect(screen, color_border, self.rect, 1, border_radius=6)
+
+        left_rect, right_rect = self._arrow_rects()
+        pygame.draw.polygon(screen, COLOR_LABEL, [
+            (left_rect.right, left_rect.top),
+            (left_rect.right, left_rect.bottom),
+            (left_rect.left, left_rect.centery)
+        ])
+        pygame.draw.polygon(screen, COLOR_LABEL, [
+            (right_rect.left, right_rect.top),
+            (right_rect.left, right_rect.bottom),
+            (right_rect.right, right_rect.centery)
+        ])
+
+        scenario_name = self.get_value()
+        description = self.get_description()
+
+        title_font = fonts['title']
+        desc_font = fonts['desc']
+        name_surface = title_font.render(scenario_name.upper(), True, COLOR_TEXT)
+        name_x = self.rect.centerx - name_surface.get_width() // 2
+        name_y = self.rect.y + 10
+        screen.blit(name_surface, (name_x, name_y))
+
+        max_width = self.rect.width - 60
+        lines = self._wrap_text(description, desc_font, max_width)
+        start_y = name_y + name_surface.get_height() + 6
+        for i, line in enumerate(lines[:2]):
+            line_surface = desc_font.render(line, True, COLOR_HINT)
+            line_x = self.rect.centerx - line_surface.get_width() // 2
+            screen.blit(line_surface, (line_x, start_y + i * (line_surface.get_height() + 2)))
+
 class Button(Widget):
     def __init__(self, x, y, w, h, text, callback):
         super().__init__(x, y, w, h)
@@ -161,30 +261,32 @@ class Launcher:
         # Fonts
         self.fonts = {
             'header': pygame.font.SysFont("Verdana", FONT_SIZE_HEADER, bold=True),
+            'title': pygame.font.SysFont("Verdana", FONT_SIZE_TITLE, bold=True),
             'body': pygame.font.SysFont("Verdana", FONT_SIZE_BODY),
             'label': pygame.font.SysFont("Verdana", FONT_SIZE_LABEL),
-            'hint': pygame.font.SysFont("Verdana", 10, italic=True)
+            'hint': pygame.font.SysFont("Verdana", 10, italic=True),
+            'desc': pygame.font.SysFont("Verdana", FONT_SIZE_DESC)
         }
         
         # Data
         self.scenarios = self._load_scenarios()
         
         # Layout Config
-        margin = 30
+        margin = 24
         input_h = 32
-        gap = 50
+        gap = 42
+        scenario_h = 96
         
         self.widgets: List[Widget] = []
         
         cur_y = 70
         
         # 1. Scenario (Primary)
-        self.dd_scenario = Dropdown(margin, cur_y, WINDOW_SIZE[0] - margin*2, input_h, 
-                                  "Combat Scenario", self.scenarios)
+        self.dd_scenario = ScenarioCarousel(margin, cur_y, WINDOW_SIZE[0] - margin*2, scenario_h,
+                                            "Combat Scenario", self.scenarios)
         self.widgets.append(self.dd_scenario)
-        # Hint text is drawn manually in loop
-        
-        cur_y += gap + 10
+
+        cur_y += scenario_h + 26
         
         # 2. Mode (Primary)
         modes = ["ui", "headless", "ui"] # 3D maps to UI for now
@@ -204,8 +306,8 @@ class Launcher:
         self.widgets.append(self.ti_duration)
         
         # 4. Start Button
-        btn_y = WINDOW_SIZE[1] - 60
-        self.btn_start = Button(margin, btn_y, WINDOW_SIZE[0] - margin*2, 40, "INITIALIZE SYSTEM", self.start_simulation)
+        btn_y = WINDOW_SIZE[1] - 58
+        self.btn_start = Button(margin, btn_y, WINDOW_SIZE[0] - margin*2, 40, "LAUNCH SIMULATION", self.start_simulation)
         self.widgets.append(self.btn_start)
         
         self.running = True
@@ -213,12 +315,22 @@ class Launcher:
         self.focus_idx = 0
         self.widgets[0].focused = True
         
-    def _load_scenarios(self) -> List[str]:
+    def _load_scenarios(self) -> List[Dict[str, str]]:
         scenario_dir = Path(__file__).parent.parent.parent.parent / 'scenarios'
         if not scenario_dir.exists():
-            return ["default"]
-        files = [f.stem for f in scenario_dir.glob("*.yaml")]
-        return sorted(files) if files else ["default"]
+            return [{"name": "default", "description": "Default scenario configuration."}]
+        scenarios = []
+        for scenario_file in sorted(scenario_dir.glob("*.yaml")):
+            description = "Default scenario configuration."
+            try:
+                with open(scenario_file, "r", encoding="utf-8") as handle:
+                    data = yaml.safe_load(handle) or {}
+                if isinstance(data, dict):
+                    description = data.get("description", description)
+            except (OSError, yaml.YAMLError):
+                description = "Scenario description could not be loaded."
+            scenarios.append({"name": scenario_file.stem, "description": description})
+        return scenarios if scenarios else [{"name": "default", "description": "Default scenario configuration."}]
 
     def start_simulation(self):
         try:
@@ -270,10 +382,6 @@ class Launcher:
             
             # Separator (Subtle)
             pygame.draw.line(self.screen, COLOR_BORDER, (30, 50), (WINDOW_SIZE[0]-30, 50), 1)
-            
-            # Hint under Scenario
-            hint = self.fonts['hint'].render("Select a combat scenario configuration to load", True, COLOR_HINT)
-            self.screen.blit(hint, (30, 105)) # Just below Scenario input
             
             # Widgets
             for w in self.widgets:

@@ -180,6 +180,9 @@ class SimulationRunner:
             self.autopilot.set_target_altitude(altitude)
             self.autopilot.target_speed = speed
         
+        # Store for restart_simulation()
+        self._scenario_autopilot_mode = autopilot_mode
+        
         self.autopilot.set_mode(autopilot_mode)
         self.autopilot.enable()
             
@@ -372,7 +375,7 @@ class SimulationRunner:
         
         # Re-enable autopilot if needed
         if self.use_autopilot and self.autopilot:
-             self.autopilot.set_mode(AutopilotMode.COMBAT)
+             self.autopilot.set_mode(self._scenario_autopilot_mode)
              self.autopilot.enable()
 
     def _handle_events(self):

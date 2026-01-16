@@ -20,6 +20,7 @@ from ..vision.lock_on import LockOnSystem, LockState
 from ..vision.noise import DetectionNoiseModel, NoiseConfig
 from ..vision.delay import DelayedStream, LatencyConfig
 from ..competition.server_sim import CompetitionServerSimulator
+from ..uav.autopilot import Autopilot, AutopilotMode
 from ..uav.target_behavior import TargetManeuverController
 from ..scenarios import ScenarioLoader, ScenarioDefinition
 
@@ -65,6 +66,9 @@ class SimulationConfig:
     camera_fov: float = 60.0
     camera_resolution: tuple = (640, 480)
 
+    # Autopilot
+    autopilot_enabled: bool = False
+
 
 class SimulationCore:
     """
@@ -108,13 +112,21 @@ class SimulationCore:
         self.detector = SimulationDetector(rng=self.rng)
         
         self.tracker = TargetTracker({})
+
+        # Autopilot (optional for headless)
+        self.autopilot = Autopilot()
+        self.autopilot.set_mode(AutopilotMode.COMBAT)
+        self.autopilot.set_camera_frame_size(config.camera_resolution)
         
         # LockOnSystem requires LockConfig, not a dict
         from src.vision.lock_on import LockConfig
         lock_cfg = LockConfig(
-            required_continuous_seconds=1.0,
+            required_continuous_seconds=4.0,
+            size_threshold=0.06,
             margin_horizontal=0.5,
-            margin_vertical=0.5
+            margin_vertical=0.5,
+            frame_width=config.camera_resolution[0],
+            frame_height=config.camera_resolution[1]
         )
         self.lock_on = LockOnSystem(lock_cfg)
         # Note: frame_size is passed to validate_lock_candidate() at runtime, not set here
@@ -179,6 +191,9 @@ class SimulationCore:
                 scenario.camera_resolution[0],
                 scenario.camera_resolution[1]
             )
+            self.lock_on.config.frame_width = scenario.camera_resolution[0]
+            self.lock_on.config.frame_height = scenario.camera_resolution[1]
+            self.autopilot.set_camera_frame_size(scenario.camera_resolution)
             
         # Override perception FPS if specified
         if scenario.perception_fps:
@@ -291,15 +306,8 @@ class SimulationCore:
         # Apply controls to player
         player = self.world.get_player_uav()
         if player and not player.is_crashed:
-            # Pass detections to autopilot if in COMBAT mode
-            # Assumes player has 'autopilot' attribute, typically handled in high-level main
-            # or we need to ensure player object has access to it.
-            # FixedWingUAV doesn't have autopilot instance by default, it's usually external.
-            # However, if we are in headless mode, who runs the autopilot?
-            # 'controls_fn' takes state and returns controls.
-            # So the caller (run method) should handle this.
-            
-            # Let's check run() method below.
+            if controls is None and self.config.autopilot_enabled:
+                controls = self._compute_autopilot_controls(player, dt)
             if controls:
                 player.set_controls(**controls, dt=dt)
             
@@ -335,6 +343,10 @@ class SimulationCore:
             }
             self.server.report_lock_on(self.config.team_id, lock_data)
             self.lock_on.reset()
+            if self.config.autopilot_enabled:
+                self.autopilot.combat_manager.register_successful_lock(
+                    lock_state.target_id, lock_state.lock_end_time or self.world.time
+                )
                 
         # Update server with positions
         self._update_server_positions()
@@ -427,6 +439,22 @@ class SimulationCore:
             self._last_tracks = delayed_tracks if delayed_tracks is not None else []
         else:
             self._last_tracks = raw_tracks
+
+        if self.config.autopilot_enabled:
+            self.autopilot.set_combat_detections(self._last_tracks)
+
+    def _compute_autopilot_controls(self, player, dt: float) -> Optional[Dict]:
+        """Compute autopilot controls using latest perception data."""
+        if not self.autopilot.enabled:
+            return None
+        state = {
+            'position': player.get_position().tolist(),
+            'velocity': player.state.velocity.tolist(),
+            'altitude': player.get_altitude(),
+            'speed': player.get_speed(),
+            'heading': player.get_heading_degrees()
+        }
+        return self.autopilot.update(state, dt)
         
     def _update_server_positions(self):
         """Update competition server with UAV positions."""

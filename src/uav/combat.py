@@ -430,6 +430,7 @@ class CombatStateManager:
         self.visual_servo = VisualServo(self.config)
         self.state = CombatState.SEARCH
         self.target_id: Optional[int] = None
+        self.target_selector = TargetSelector()
         self.search_waypoints: List[np.ndarray] = []
         self.current_wp_index = 0
         self.frame_size = (640, 480)
@@ -438,6 +439,15 @@ class CombatStateManager:
         """Set the current camera frame size used for visual servoing."""
         if frame_size and len(frame_size) == 2:
             self.frame_size = (int(frame_size[0]), int(frame_size[1]))
+
+    def register_successful_lock(self, target_id: int, timestamp: float):
+        """Record a successful lock for target selection logic."""
+        if target_id is not None:
+            self.target_selector.register_lock(target_id, timestamp)
+
+    def reset_target_selection(self):
+        """Reset target selection history."""
+        self.target_selector.reset()
         
     def update(self, uav_state: Dict, tracks: List) -> Dict:
         """
@@ -505,14 +515,15 @@ class CombatStateManager:
     def _check_transitions(self, uav_state, tracks):
         """Update state machine based on environment."""
         target = self._get_target(tracks)
-        
-        # Default priority: confirmed targets close to center
+
         if not target and tracks:
-            confirmed = [t for t in tracks if t.is_confirmed]
-            if confirmed:
-                # Pick closest
-                self.target_id = confirmed[0].id
-                target = confirmed[0]
+            my_position = np.array(uav_state['position'])
+            selected = self.target_selector.select_target(tracks, my_position)
+            if selected:
+                self.target_id = selected.id
+                target = selected
+            else:
+                self.target_id = None
         
         if target:
             # Distance check
@@ -576,6 +587,7 @@ class CombatStateManager:
         for t in tracks:
             if t.id == self.target_id:
                 return t
+        self.target_id = None
         return None
 
     def _bbox_search(self, uav_state):

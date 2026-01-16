@@ -92,6 +92,7 @@ class FixedWingUAV:
         self.Cma = -0.6      # Pitch stability (per rad)
         self.Cmq = -10.0     # Pitch damping (per rad/s)
         self.Cm_de = -0.8    # Elevator control power (per rad)
+        self.stall_drag_factor = config.get('stall_drag_factor', 0.12)
         
         # Lateral (Side force, Roll, Yaw)
         self.CYb = -0.3      # Side force stability
@@ -106,11 +107,22 @@ class FixedWingUAV:
         self.state = UAVState()
         self.controls = ControlInputs()
         
+        # Kontrol yüzeyi hız limitleri (birim/saniye)
+        self.aileron_rate = config.get('aileron_rate', 3.0)
+        self.elevator_rate = config.get('elevator_rate', 3.0)
+        self.rudder_rate = config.get('rudder_rate', 3.0)
+        self.throttle_rate = config.get('throttle_rate', 1.5)
+        
         # Simülasyon değişkenleri
         self.is_crashed = False
         self.is_stalled = False
         self._current_thrust = 0.0
         self._total_time = 0.0
+        
+        # Yer etkileşimi parametreleri
+        self.ground_restitution = config.get('ground_restitution', 0.2)
+        self.ground_friction = config.get('ground_friction', 0.6)
+        self.crash_vertical_speed = config.get('crash_vertical_speed', 12.0)
         
     def reset(self, position: np.ndarray = None, heading: float = 0.0):
         """İHA'yı başlangıç durumuna sıfırla"""
@@ -131,16 +143,29 @@ class FixedWingUAV:
         self.controls.throttle = 0.6
         
     def set_controls(self, aileron: float = None, elevator: float = None, 
-                     rudder: float = None, throttle: float = None):
+                     rudder: float = None, throttle: float = None,
+                     dt: Optional[float] = None):
         """Kontrol girdilerini ayarla"""
         if aileron is not None:
-            self.controls.aileron = np.clip(aileron, -1, 1)
+            target = np.clip(aileron, -1, 1)
+            self.controls.aileron = self._apply_rate_limit(
+                self.controls.aileron, target, self.aileron_rate, dt
+            )
         if elevator is not None:
-            self.controls.elevator = np.clip(elevator, -1, 1)
+            target = np.clip(elevator, -1, 1)
+            self.controls.elevator = self._apply_rate_limit(
+                self.controls.elevator, target, self.elevator_rate, dt
+            )
         if rudder is not None:
-            self.controls.rudder = np.clip(rudder, -1, 1)
+            target = np.clip(rudder, -1, 1)
+            self.controls.rudder = self._apply_rate_limit(
+                self.controls.rudder, target, self.rudder_rate, dt
+            )
         if throttle is not None:
-            self.controls.throttle = np.clip(throttle, 0, 1)
+            target = np.clip(throttle, 0, 1)
+            self.controls.throttle = self._apply_rate_limit(
+                self.controls.throttle, target, self.throttle_rate, dt
+            )
             
     def update(self, dt: float):
         """
@@ -177,7 +202,7 @@ class FixedWingUAV:
         # u, v, w = v_air_body
         u, v, w = v_air_body
         alpha = np.arctan2(w, u)
-        beta = np.arcsin(v / airspeed)
+        beta = np.arcsin(np.clip(v / airspeed, -1.0, 1.0))
         
         self.is_stalled = (airspeed < self.min_speed) or (abs(np.degrees(alpha)) > 15.0)
         
@@ -199,6 +224,8 @@ class FixedWingUAV:
             
         # Drag Coefficient
         CD = self.CD0 + self.CD_induced_k * CL**2
+        if self.is_stalled:
+            CD += self.stall_drag_factor
         
         # Side Force Coefficient
         CY = self.CYb * beta + self.Cn_dr * dr
@@ -292,23 +319,10 @@ class FixedWingUAV:
         v_inertial = R_b2i @ self.state.velocity
         self.state.position += v_inertial * dt
         
-        # Oryantasyon (Kinematic Equations for Euler Angles)
-        # ph_dot = p + (q*sin(ph) + r*cos(ph))*tan(th)
-        # th_dot = q*cos(ph) - r*sin(ph)
-        # ps_dot = (q*sin(ph) + r*cos(ph))/cos(th)
-        
-        p, q, r = self.state.angular_velocity
-        sph, cph = np.sin(phi), np.cos(phi)
-        tth, cth = np.tan(theta), np.cos(theta)
-        
-        # Singularity check at theta = +/- 90
-        if abs(cth) < 0.001: cth = 0.001
-        
-        phi_dot = p + (q * sph + r * cph) * tth
-        theta_dot = q * cph - r * sph
-        psi_dot = (q * sph + r * cph) / cth
-        
-        self.state.orientation += np.array([phi_dot, theta_dot, psi_dot]) * dt
+        # Oryantasyon (Quaternion tabanlı entegrasyon)
+        quat = self._euler_to_quaternion(phi, theta, psi)
+        quat = self._integrate_quaternion(quat, self.state.angular_velocity, dt)
+        self.state.orientation = self._quaternion_to_euler(quat)
         
         # 9. Sınırlandırma ve cleanup
         # Wrap yaw
@@ -318,9 +332,16 @@ class FixedWingUAV:
         # Yere çarpma
         if self.state.position[2] < 0:
             self.state.position[2] = 0
-            self.state.velocity = np.zeros(3)
-            self.state.angular_velocity = np.zeros(3)
-            self.is_crashed = True
+            v_inertial = R_b2i @ self.state.velocity
+            if abs(v_inertial[2]) > self.crash_vertical_speed:
+                self.state.velocity = np.zeros(3)
+                self.state.angular_velocity = np.zeros(3)
+                self.is_crashed = True
+            else:
+                v_inertial[2] = -v_inertial[2] * self.ground_restitution
+                v_inertial[0] *= max(0.0, 1.0 - self.ground_friction)
+                v_inertial[1] *= max(0.0, 1.0 - self.ground_friction)
+                self.state.velocity = R_i2b @ v_inertial
             
     def _rotation_matrix(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
         """Euler açılarından dönüşüm matrisi oluştur (Body -> Inertial)"""
@@ -343,6 +364,72 @@ class FixedWingUAV:
         while angle < -np.pi:
             angle += 2 * np.pi
         return angle
+
+    def _euler_to_quaternion(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
+        """Euler (roll, pitch, yaw) -> quaternion (w, x, y, z)."""
+        cr = np.cos(roll * 0.5)
+        sr = np.sin(roll * 0.5)
+        cp = np.cos(pitch * 0.5)
+        sp = np.sin(pitch * 0.5)
+        cy = np.cos(yaw * 0.5)
+        sy = np.sin(yaw * 0.5)
+        return np.array([
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy
+        ])
+
+    def _quaternion_to_euler(self, quat: np.ndarray) -> np.ndarray:
+        """Quaternion (w, x, y, z) -> Euler (roll, pitch, yaw)."""
+        w, x, y, z = quat
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        sinp = 2.0 * (w * y - z * x)
+        pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+        return np.array([roll, pitch, yaw])
+
+    def _quat_multiply(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        """Quaternion çarpımı (w, x, y, z)."""
+        w1, x1, y1, z1 = q1
+        w2, x2, y2, z2 = q2
+        return np.array([
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        ])
+
+    def _integrate_quaternion(self, quat: np.ndarray, omega: np.ndarray, dt: float) -> np.ndarray:
+        """Quaternionu açısal hızla RK4 entegre et."""
+        omega_quat = np.array([0.0, omega[0], omega[1], omega[2]])
+
+        def q_dot(q):
+            return 0.5 * self._quat_multiply(q, omega_quat)
+
+        k1 = q_dot(quat)
+        k2 = q_dot(quat + 0.5 * dt * k1)
+        k3 = q_dot(quat + 0.5 * dt * k2)
+        k4 = q_dot(quat + dt * k3)
+        quat_next = quat + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return quat_next / np.linalg.norm(quat_next)
+
+    def _apply_rate_limit(
+        self,
+        current: float,
+        target: float,
+        rate: float,
+        dt: Optional[float]
+    ) -> float:
+        """Kontrol değerine hız limiti uygula."""
+        if dt is None:
+            return target
+        max_delta = rate * dt
+        return current + np.clip(target - current, -max_delta, max_delta)
         
     # --- Getters & Helpers ---
     # Not: Bazı getter'lar artık doğrudan _state_ değişkenlerinden alınabilir,

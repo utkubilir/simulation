@@ -295,7 +295,7 @@ class SimulationCore:
             
             # Let's check run() method below.
             if controls:
-                player.set_controls(**controls)
+                player.set_controls(**controls, dt=dt)
             
         # Update target behaviors
         self._update_target_behaviors(dt)
@@ -370,7 +370,8 @@ class SimulationCore:
                 aileron=cmd.aileron,
                 elevator=cmd.elevator,
                 rudder=cmd.rudder,
-                throttle=cmd.throttle
+                throttle=cmd.throttle,
+                dt=dt
             )
         
     def _run_perception(self, player):

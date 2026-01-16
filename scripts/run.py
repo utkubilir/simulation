@@ -27,6 +27,40 @@ from src.logging.frame_logger import FrameLogger, FrameData
 from src.simulation.air_defense import AirDefenseManager
 
 
+def _available_scenarios() -> list[str]:
+    scenarios_dir = Path(__file__).parent.parent / 'scenarios'
+    return sorted([p.stem for p in scenarios_dir.glob('*.yaml')])
+
+
+def _validate_scenario_config(scenario_name: str, config: dict) -> dict:
+    if not isinstance(config, dict):
+        raise ValueError(f"Scenario '{scenario_name}' config must be a mapping.")
+
+    for key in ('simulation', 'camera', 'player', 'lock', 'tracking', 'detection'):
+        if key in config and not isinstance(config[key], dict):
+            raise ValueError(f"Scenario '{scenario_name}' key '{key}' must be a mapping.")
+
+    enemies = config.get('enemies', [])
+    if enemies and not isinstance(enemies, list):
+        raise ValueError(f"Scenario '{scenario_name}' key 'enemies' must be a list.")
+
+    if isinstance(enemies, list):
+        for idx, enemy in enumerate(enemies):
+            if not isinstance(enemy, dict):
+                raise ValueError(
+                    f"Scenario '{scenario_name}' enemy at index {idx} must be a mapping."
+                )
+
+    return config
+
+
+def _normalize_camera_resolution(camera_config: dict) -> tuple[int, int]:
+    resolution = camera_config.get('resolution')
+    if resolution:
+        return int(resolution[0]), int(resolution[1])
+    return int(camera_config.get('width', 640)), int(camera_config.get('height', 480))
+
+
 class SimulationRunner:
     """Unified simulation runner for UI and headless modes"""
     
@@ -48,6 +82,9 @@ class SimulationRunner:
         det_config_path = config.get('detection', {}).get('config_path')
         self.detector = SimulationDetector(config_path=det_config_path, rng=self.rng)
         self.tracker = TargetTracker(config.get('tracking', {}))
+
+        camera_config = config.get('camera', {})
+        self.camera_resolution = _normalize_camera_resolution(camera_config)
         
         # Lock-on with competition settings
         lock_config = LockConfig(
@@ -57,8 +94,8 @@ class SimulationRunner:
             margin_horizontal=config.get('lock', {}).get('margin_h', 0.5),
             margin_vertical=config.get('lock', {}).get('margin_v', 0.5),
             min_confidence=config.get('lock', {}).get('min_confidence', 0.5),
-            frame_width=config.get('camera', {}).get('width', 640),
-            frame_height=config.get('camera', {}).get('height', 480)
+            frame_width=self.camera_resolution[0],
+            frame_height=self.camera_resolution[1]
         )
         self.lock_sm = LockOnStateMachine(lock_config)
         
@@ -80,9 +117,11 @@ class SimulationRunner:
         self.autopilot = None
         
         if mode == 'ui':
+            radar_heading_mode = config.get('ui', {}).get('radar_heading_mode', 'heading_up')
             self.renderer = Renderer(
                 width=config.get('simulation', {}).get('window_width', 1280),
-                height=config.get('simulation', {}).get('window_height', 720)
+                height=config.get('simulation', {}).get('window_height', 720),
+                radar_heading_mode=radar_heading_mode
             )
             self.camera = SimulatedCamera(config.get('camera', {}))
             self.controller = FlightController()
@@ -100,6 +139,7 @@ class SimulationRunner:
         # Make sure autopilot is initialized and enabled
         if self.autopilot is None:
             self.autopilot = Autopilot()
+        self.autopilot.set_camera_frame_size(self.camera_resolution)
         
         # Always start in COMBAT mode (otonom kilitlenme)
         self.autopilot.set_mode(AutopilotMode.COMBAT)
@@ -397,7 +437,7 @@ class SimulationRunner:
                 )
             else:
                 # Headless mod için minimal frame
-                frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                frame = np.zeros((self.camera_resolution[1], self.camera_resolution[0], 3), dtype=np.uint8)
             
             # Detect and track
             detections = self.detector.detect(frame)
@@ -543,14 +583,17 @@ class SimulationRunner:
 def load_scenario(scenario_name: str) -> dict:
     """Load scenario configuration"""
     import yaml
-    
+
     scenario_path = Path(__file__).parent.parent / 'scenarios' / f'{scenario_name}.yaml'
     if scenario_path.exists():
-        with open(scenario_path, 'r') as f:
-            return yaml.safe_load(f)
-            
-    # Fallback to default config
-    return {}
+        with open(scenario_path, 'r', encoding='utf-8') as f:
+            loaded = yaml.safe_load(f) or {}
+        return _validate_scenario_config(scenario_name, loaded)
+
+    available = ", ".join(_available_scenarios()) or "none"
+    raise FileNotFoundError(
+        f"Scenario '{scenario_name}' not found. Available scenarios: {available}"
+    )
 
 
 def main():
@@ -570,8 +613,11 @@ def main():
     
     args = parser.parse_args()
     
-    # Load scenario config
-    scenario_config = load_scenario(args.scenario)
+    try:
+        scenario_config = load_scenario(args.scenario)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
     
     # Merge with CLI args
     config = {

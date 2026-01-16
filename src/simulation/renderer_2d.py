@@ -37,9 +37,10 @@ class Renderer2D:
     COLOR_TEXT = (200, 200, 200)
     COLOR_HUD_BG = (30, 35, 40, 200)
     
-    def __init__(self, width: int = 1280, height: int = 720):
+    def __init__(self, width: int = 1280, height: int = 720, radar_heading_mode: str = "heading_up"):
         self.width = width
         self.height = height
+        self.radar_heading_mode = radar_heading_mode
         
         # Map viewport
         self.map_rect = pygame.Rect(0, 0, width - 300, height)  # Leave room for camera inset
@@ -79,7 +80,7 @@ class Renderer2D:
         self.clock = pygame.time.Clock()
         
         # Init HUD Overlay
-        self.hud_overlay = HUDOverlay(self.width, self.height)
+        self.hud_overlay = HUDOverlay(self.width, self.height, radar_heading_mode=self.radar_heading_mode)
         
     def close(self):
         """Cleanup pygame"""

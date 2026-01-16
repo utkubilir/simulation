@@ -12,11 +12,11 @@ import pygame
 import numpy as np
 
 class Renderer:
-    def __init__(self, width=1280, height=720):
+    def __init__(self, width=1280, height=720, radar_heading_mode: str = "heading_up"):
         self.ui_mode = UIMode.COMPETITION
         self.width = width
         self.height = height
-        self.map_renderer = Renderer2D(width, height)
+        self.map_renderer = Renderer2D(width, height, radar_heading_mode=radar_heading_mode)
         
         # Inset size: 320x240 (standard QVGA)
         self.inset_width = 320

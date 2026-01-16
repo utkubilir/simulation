@@ -432,6 +432,12 @@ class CombatStateManager:
         self.target_id: Optional[int] = None
         self.search_waypoints: List[np.ndarray] = []
         self.current_wp_index = 0
+        self.frame_size = (640, 480)
+
+    def set_frame_size(self, frame_size: Tuple[int, int]):
+        """Set the current camera frame size used for visual servoing."""
+        if frame_size and len(frame_size) == 2:
+            self.frame_size = (int(frame_size[0]), int(frame_size[1]))
         
     def update(self, uav_state: Dict, tracks: List) -> Dict:
         """
@@ -625,26 +631,26 @@ class CombatStateManager:
         return {'mode': 'manual', 'params': {}}
 
     def _bbox_lock(self, uav_state, target):
-         # Lock logic: Visual Servoing (Image-based)
-         # We need to center the target in the frame.
-         
-         if not hasattr(target, 'center'):
-             # Fallback to track if no 2D center info (unlikely for visual target)
-             return self._bbox_track(uav_state, target)
-             
-         roll_cmd, pitch_cmd = self.visual_servo.calculate_commands(
-             target_center=target.center,
-             frame_size=(640, 480) # TODO: Pass actual frame size from tracker/detector?
-         )
-         
-         # Convert visual servo commands to autopilot directives
-         # 'direct' mode is needed in autopilot to accept roll/pitch directly.
-         
-         return {
-             'mode': 'direct',
-             'params': {
-                 'roll': roll_cmd,
-                 'pitch': pitch_cmd,
-                 'throttle': 0.8 # Maintain high speed for maneuvering
-             }
-         }
+        # Lock logic: Visual Servoing (Image-based)
+        # We need to center the target in the frame.
+
+        if not hasattr(target, 'center'):
+            # Fallback to track if no 2D center info (unlikely for visual target)
+            return self._bbox_track(uav_state, target)
+
+        roll_cmd, pitch_cmd = self.visual_servo.calculate_commands(
+            target_center=target.center,
+            frame_size=self.frame_size
+        )
+
+        # Convert visual servo commands to autopilot directives
+        # 'direct' mode is needed in autopilot to accept roll/pitch directly.
+
+        return {
+            'mode': 'direct',
+            'params': {
+                'roll': roll_cmd,
+                'pitch': pitch_cmd,
+                'throttle': 0.8 # Maintain high speed for maneuvering
+            }
+        }

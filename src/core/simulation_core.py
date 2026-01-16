@@ -112,9 +112,12 @@ class SimulationCore:
         # LockOnSystem requires LockConfig, not a dict
         from src.vision.lock_on import LockConfig
         lock_cfg = LockConfig(
-            required_continuous_seconds=1.0,
+            required_continuous_seconds=4.0,
+            size_threshold=0.06,
             margin_horizontal=0.5,
-            margin_vertical=0.5
+            margin_vertical=0.5,
+            frame_width=config.camera_resolution[0],
+            frame_height=config.camera_resolution[1]
         )
         self.lock_on = LockOnSystem(lock_cfg)
         # Note: frame_size is passed to validate_lock_candidate() at runtime, not set here
@@ -174,6 +177,8 @@ class SimulationCore:
         if scenario.camera_resolution:
             self.config.camera_resolution = scenario.camera_resolution
             # Note: frame_size is passed to validate_lock_candidate() at runtime
+            self.lock_on.config.frame_width = scenario.camera_resolution[0]
+            self.lock_on.config.frame_height = scenario.camera_resolution[1]
             
         # Override perception FPS if specified
         if scenario.perception_fps:

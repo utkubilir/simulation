@@ -473,13 +473,27 @@ class Autopilot:
             }
 
         elif mode == 'track':
-            # Parametrelerden hedef bilgilerini al
-            # Combat manager henüz full track parametreleri dönmüyor olabilir
-            # Şimdilik mevcut _track_target mantığını kullanalım
-            # Ama hedef ID'yi combat manager biliyor
-            target_id = self.combat_manager.target_id
+            heading = params.get('heading')
+            altitude = params.get('altitude')
+            speed = params.get('speed')
+
+            if heading is not None:
+                self.set_target_heading(heading)
+            if altitude is not None:
+                self.set_target_altitude(altitude)
+            if speed is not None:
+                self.target_speed = max(0.0, speed)
+
+            if heading is not None or altitude is not None or speed is not None:
+                return self._heading_hold(
+                    uav_state['altitude'],
+                    uav_state['speed'],
+                    np.radians(uav_state['heading']),
+                    dt
+                )
+
             target = self.combat_manager._get_target(tracks)
-            
+
             if target:
                 # Hedef konumunu güncelle
                 # Use world_pos if available
@@ -490,11 +504,11 @@ class Autopilot:
                         velocity=target.velocity if hasattr(target, 'velocity') else None
                     )
                     return self._track_target(
-                        np.array(uav_state['position']), 
+                        np.array(uav_state['position']),
                         np.array(uav_state['velocity']),
-                        uav_state['altitude'], 
-                        uav_state['speed'], 
-                        np.radians(uav_state['heading']), 
+                        uav_state['altitude'],
+                        uav_state['speed'],
+                        np.radians(uav_state['heading']),
                         dt
                     )
                 elif hasattr(target, 'center') and target.center is not None:

@@ -89,6 +89,9 @@ class FixedCamera:
         # Lens flare
         self.lens_flare_enabled = config.get('lens_flare', False)
         self.sun_direction = np.array(config.get('sun_direction', [0.5, 0.3, 0.8]))
+        self.sun_direction = self._normalize_vector(self.sun_direction)
+        self.sun_intensity = config.get('sun_intensity', 1.0)
+        self.sun_angular_radius = config.get('sun_angular_radius', 0.01)
         
         # Görsel efektler
         self.vignette_enabled = config.get('vignette_enabled', True)
@@ -155,6 +158,16 @@ class FixedCamera:
             self.p1 = float(p1)
         if p2 is not None:
             self.p2 = float(p2)
+
+    def set_sun_direction(self, direction: np.ndarray):
+        """Update sun direction (normalized)."""
+        self.sun_direction = self._normalize_vector(np.array(direction))
+
+    def _normalize_vector(self, vec: np.ndarray) -> np.ndarray:
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            return vec
+        return vec / norm
         
     def update(self, dt: float, uav_velocity: np.ndarray = None):
         """
@@ -839,24 +852,24 @@ class FixedCamera:
         speed = np.linalg.norm(velocity)
         if speed < 5:  # Minimum blur hızı
             return frame
-            
-        # Kamera koordinatlarında hız yönü
-        yaw = camera_orient[2]
-        rel_vel = np.array([
-            velocity[0] * np.cos(yaw) + velocity[1] * np.sin(yaw),
-            -velocity[0] * np.sin(yaw) + velocity[1] * np.cos(yaw)
-        ])
-        
-        # Blur kernel boyutu
+
+        # Kamera koordinatlarında hız vektörü (x=ileri, y=sağ, z=aşağı)
+        R = euler_to_rotation_matrix(*camera_orient)
+        cam_vel = R.T @ velocity
+        image_vel = np.array([cam_vel[1], cam_vel[2]])
+        image_speed = np.linalg.norm(image_vel)
+
+        # Blur kernel boyutu (hız + exposure etkisi)
         blur_strength = getattr(self, 'blur_strength', 5)
-        blur_size = min(int(speed / 10) + 1, blur_strength)
+        exposure_scale = max(0.5, min(2.0, self.exposure_time / 0.01))
+        blur_size = min(int(speed / 10 * exposure_scale) + 1, blur_strength)
         blur_size = max(3, blur_size if blur_size % 2 == 1 else blur_size + 1)
         
         # Motion blur kernel
         kernel = np.zeros((blur_size, blur_size), dtype=np.float32)
         
-        if np.linalg.norm(rel_vel) > 0.1:
-            angle = np.arctan2(rel_vel[1], rel_vel[0])
+        if image_speed > 0.1:
+            angle = np.arctan2(image_vel[1], image_vel[0])
         else:
             angle = 0
             
@@ -920,34 +933,30 @@ class FixedCamera:
         """Güneşe bakınca lens flare efekti uygula"""
         h, w = frame.shape[:2]
         
-        # Güneş yönü (sabit)
-        sun_direction = getattr(self, 'sun_direction', np.array([0.5, 0.3, 0.8]))
-        sun_direction = sun_direction / np.linalg.norm(sun_direction)
-        
-        # Kamera ileri vektörü
-        yaw, pitch = camera_orient[2], camera_orient[1]
-        camera_forward = np.array([
-            np.cos(yaw) * np.cos(pitch),
-            np.sin(yaw) * np.cos(pitch),
-            -np.sin(pitch)
-        ])
-        
-        # Güneşle açı
-        sun_dot = np.dot(camera_forward, sun_direction)
+        # Güneş yönü (normalize)
+        sun_direction = self.sun_direction
+        R = euler_to_rotation_matrix(*camera_orient)
+        cam_forward = R @ np.array([1, 0, 0])
+        sun_dot = np.dot(cam_forward, sun_direction)
         
         if sun_dot < 0.5:  # Güneş görünmüyor
             return frame
             
-        flare_intensity = (sun_dot - 0.5) * 2  # 0-1 arası
-        
-        # Güneş ekran pozisyonu
-        sun_screen_x = int(w / 2 + sun_direction[1] * w * 0.3)
-        sun_screen_y = int(h / 2 - sun_direction[2] * h * 0.3)
+        flare_intensity = (sun_dot - 0.5) * 2 * self.sun_intensity  # 0-1 arası
+
+        # Güneş ekran pozisyonu (kameraya göre projeksiyon)
+        sun_cam = R.T @ (sun_direction * 1000.0)
+        if sun_cam[0] <= 0:
+            return frame
+        sun_x = self.K[0, 0] * sun_cam[1] / sun_cam[0] + self.K[0, 2]
+        sun_y = self.K[1, 1] * sun_cam[2] / sun_cam[0] + self.K[1, 2]
+        sun_screen_x = int(sun_x)
+        sun_screen_y = int(sun_y)
         
         flare_overlay = frame.copy()
         
         # Ana güneş parlak noktası
-        glow_radius = int(50 * flare_intensity)
+        glow_radius = int(max(10, 50 * flare_intensity))
         if 0 < sun_screen_x < w and 0 < sun_screen_y < h:
             cv2.circle(flare_overlay, (sun_screen_x, sun_screen_y), glow_radius, 
                       (200, 220, 255), -1)
@@ -1078,6 +1087,9 @@ class FixedCamera:
             'motion_blur_enabled': self.motion_blur_enabled,
             'chromatic_aberration_enabled': self.chromatic_aberration_enabled,
             'lens_flare_enabled': self.lens_flare_enabled,
+            'sun_direction': self.sun_direction.tolist(),
+            'sun_intensity': self.sun_intensity,
+            'sun_angular_radius': self.sun_angular_radius,
             'vignette_enabled': self.vignette_enabled,
             'haze_enabled': self.haze_enabled,
             'haze_distance': self.haze_distance,
@@ -1093,4 +1105,3 @@ class FixedCamera:
 
 # Geriye uyumluluk için alias
 SimulatedCamera = FixedCamera
-

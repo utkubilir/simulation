@@ -80,11 +80,12 @@ class TestAutopilot:
     """Test autopilot modes."""
     
     def test_autopilot_init(self):
-        """Autopilot should initialize with default values."""
+        """Autopilot should initialize with default values (full autonomous per spec)."""
         ap = Autopilot()
         
-        assert ap.mode == AutopilotMode.MANUAL
-        assert not ap.enabled
+        # Teknofest şartnamesi: Tam otonom mod zorunlu, varsayılan COMBAT
+        assert ap.mode == AutopilotMode.COMBAT
+        assert ap.enabled  # Her zaman aktif
         
     def test_set_mode(self):
         """Should be able to set autopilot mode."""
@@ -94,14 +95,15 @@ class TestAutopilot:
         assert ap.mode == AutopilotMode.ALTITUDE_HOLD
         
     def test_enable_disable(self):
-        """Enable and disable should work correctly."""
+        """Enable works, disable is intentionally no-op (full autonomous spec)."""
         ap = Autopilot()
         
         ap.enable()
         assert ap.enabled
         
+        # Teknofest şartnamesi: Tam otonom mod zorunlu, disable() pasif
         ap.disable()
-        assert not ap.enabled
+        assert ap.enabled  # Hâlâ aktif kalmalı
         
     def test_set_target_altitude(self):
         """Should set target altitude."""
@@ -142,10 +144,10 @@ class TestAutopilot:
         assert 'elevator' in controls
         assert 'rudder' in controls
         
-    def test_disabled_returns_none(self):
-        """Update should return None when disabled."""
+    def test_always_enabled_returns_controls(self):
+        """Update should always return controls (full autonomous spec)."""
         ap = Autopilot()
-        # Don't enable
+        # Teknofest: Autopilot her zaman aktif, disable() çalışmaz
         
         uav_state = {
             'position': np.array([0, 0, 100]),
@@ -158,7 +160,9 @@ class TestAutopilot:
         
         controls = ap.update(uav_state, dt=0.016)
         
-        assert controls is None
+        # Tam otonom: Her zaman kontrol döndürür
+        assert controls is not None
+        assert 'throttle' in controls
 
 
 class TestAutopilotWaypoint:

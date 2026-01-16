@@ -1,30 +1,45 @@
+# Straight Approach Scenario - Head-on engagement
+# Expected: Successful lock during approach
+
 name: straight_approach
 description: Target approaching head-on, testing lock acquisition
-duration: 15.0
 difficulty: easy
 expected_detection: true
 expected_lock: true
-tags:
-- baseline
-- head-on
-- lock-test
-own_uav:
-  position:
-  - 500
-  - 500
-  - 100
-  heading: 90
-targets:
-- id: target_01
-  position:
-  - 500
-  - 800
-  - 100
-  heading: 270
-  team: red
-  behavior: straight
-  behavior_params:
-    base_speed: 25.0
 expected_min_detections: 1
 expected_min_valid_locks: 1
-notes: Phase 3 Polish
+duration: 30.0
+
+world:
+  size: [1000, 1000]
+  safe_zone: [100, 100, 900, 900]
+
+own_uav:
+  position: [300, 500, 100]
+  heading: 0
+  speed: 25.0
+
+targets:
+  - id: target_01
+    behavior: straight
+    position: [700, 500, 100]
+    heading: 180
+    speed: 20.0
+    team: red
+    behavior_params:
+      base_speed: 20.0
+
+camera:
+  fov: 60
+  resolution: [640, 480]
+
+lock:
+  success_duration: 4.0
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+
+notes: >
+  Two UAVs approaching each other head-on at 400m starting distance.
+  Within detection range (500m) for immediate visibility.
+  Tests lock acquisition during closing engagement.

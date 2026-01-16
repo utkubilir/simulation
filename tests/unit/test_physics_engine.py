@@ -169,9 +169,21 @@ class Test6DOFDynamics:
         assert uav.state.position[2] < initial_altitude
 
     def test_crash_logic(self, uav):
-        """Test crash detection."""
-        uav.state.position[2] = -1.0 # Underground
-        uav.update(0.01)
+        """Test crash detection with high-speed ground impact."""
+        # Crash sadece yüksek dikey hızda (>12 m/s) tetiklenir
+        # Bu gerçekçi - düşük hızda UAV bounce yapar
+        
+        # Yüksek hızda dikey dalış simüle et (inertial Z negatif = aşağı)
+        uav.state.position[2] = 1.0  # Yere yakın
+        uav.state.velocity = np.array([20.0, 0.0, -15.0])  # Body frame: w negatif = aşağı hareket
+        uav.state.orientation = np.zeros(3)  # Düz uçuş
+        
+        # Birkaç adım - yere çarpana kadar
+        for _ in range(20):
+            uav.update(0.05)
+            if uav.is_crashed:
+                break
+        
         assert uav.is_crashed
         assert uav.state.position[2] == 0.0
         assert np.allclose(uav.state.velocity, 0)

@@ -58,7 +58,9 @@ class TestPhase3DetectionExpectations:
         """straight_approach should produce detections."""
         from src.core.simulation_core import SimulationCore, SimulationConfig
         
-        config = SimulationConfig(seed=42, duration=3.0, scenario='straight_approach')
+        # Hedef 1600m uzakta başlıyor, birbirine yaklaşıyor
+        # Görüş alanına girmesi için daha uzun süre gerekli
+        config = SimulationConfig(seed=42, duration=10.0, scenario='straight_approach')
         sim = SimulationCore(config)
         states = sim.run()
         

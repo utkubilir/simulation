@@ -682,8 +682,31 @@ class FixedCamera:
         """
         # OpenGL Render Path
         if self.renderer:
+            # --- SHADOW PASS ---
+            if hasattr(self.renderer, 'begin_shadow_pass'):
+                self.renderer.begin_shadow_pass()
+                
+                # Render Scene for Shadows (Only casters)
+                for uav in uav_states:
+                    pos = np.array(uav['position'])
+                    # Simple FOV check for shadows? Maybe skippable or use Light FOV.
+                    # For simplicity, render all close enough UAVs.
+                    
+                    heading = np.radians(uav.get('heading', 0.0))
+                    roll = np.radians(uav.get('roll', 0.0))
+                    pitch = np.radians(uav.get('pitch', 0.0))
+                    
+                    self.renderer.render_aircraft(
+                        position=pos,
+                        heading=heading,
+                        roll=roll,
+                        pitch=pitch,
+                        program=self.renderer.prog_shadow # Use Shadow Shader
+                    )
+            
+            # --- MAIN PASS ---
             # 1. Sahne Başlat
-            self.renderer.begin_frame()
+            self.renderer.begin_frame() # Sets Main FBO
             
             # 2. Kamera Güncelle
             self.renderer.update_camera(position=camera_pos, rotation=camera_orient)

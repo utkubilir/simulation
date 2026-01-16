@@ -41,18 +41,17 @@ def get_wind_at_pos(position: np.ndarray, t: float) -> np.ndarray:
         np.ndarray: [vx, vy, vz] rüzgar hızı (m/s)
     """
     # Sabit ana rüzgar (Örn: Kuzeydoğudan 5m/s)
-    base_wind = np.array([-3.5, -3.5, 0.0])
+    base_wind = np.array([-2.0, -2.0, 0.0])  # Reduced from -3.5
     
     # İrtifaya bağlı rüzgar kesmesi (shear)
     altitude = max(0.0, float(position[2]))
     shear_factor = np.clip(altitude / 500.0, 0.0, 1.0)
     shear_wind = base_wind * (0.3 + 0.7 * shear_factor)
     
-    # Kararsız rüzgar (Gusts) - Basit sinüzoidal türbülans
-    # Gerçek sistemde Dryden/von Karman filtresi kullanılır
-    gust_x = 1.5 * np.sin(0.5 * t) + 0.5 * np.cos(2.0 * t)
-    gust_y = 1.2 * np.cos(0.4 * t) + 0.4 * np.sin(1.8 * t)
-    gust_z = 0.5 * np.sin(1.2 * t) # Dikey türbülans
+    # Kararsız rüzgar (Gusts) - Reduced intensity for stable flight
+    gust_x = 0.3 * np.sin(0.5 * t) + 0.1 * np.cos(2.0 * t)  # Reduced from 1.5/0.5
+    gust_y = 0.2 * np.cos(0.4 * t) + 0.1 * np.sin(1.8 * t)  # Reduced from 1.2/0.4
+    gust_z = 0.1 * np.sin(1.2 * t)  # Reduced from 0.5
     
     return shear_wind + np.array([gust_x, gust_y, gust_z])
 

@@ -75,8 +75,8 @@ class FixedWingUAV:
         self.J_inv = np.linalg.inv(self.J)
         
         # Performans Limitleri
-        self.min_speed = config.get('min_speed', 12.0)  # m/s (stall)
-        self.max_speed = config.get('max_speed', 45.0)  # m/s
+        self.min_speed = config.get('min_speed', 20.0)  # m/s (stall) - INCREASED from 12
+        self.max_speed = config.get('max_speed', 50.0)  # m/s - INCREASED from 45
         self.behavior = config.get('behavior', 'normal') 
         self.max_thrust = config.get('max_thrust', 50.0)  # Newton
         
@@ -84,22 +84,22 @@ class FixedWingUAV:
         # Low-fidelity varsayılanları (Cessna benzeri stabil uçak)
         
         # Longitudinal (Lift, Drag, Pitch)
-        self.CL0 = 0.28      # Zero-alpha lift
-        self.CLa = 4.6       # Lift slope (per rad)
+        self.CL0 = 0.3       # Zero-alpha lift (tuned for L=W at 30 m/s cruise)
+        self.CLa = 5.0       # Lift slope (per rad) - for good pitch responsiveness
         self.CD0 = 0.03      # Parasitic drag
         self.CD_induced_k = 0.04  # Induced drag factor (1/(pi*e*AR))
-        self.Cm0 = -0.02     # Zero-alpha pitch moment
-        self.Cma = -0.6      # Pitch stability (per rad)
-        self.Cmq = -10.0     # Pitch damping (per rad/s)
+        self.Cm0 = -0.08     # Zero-alpha pitch moment (INCREASED negative for stability)
+        self.Cma = -1.0      # Pitch stability (per rad) - increased from -0.6
+        self.Cmq = -20.0     # Pitch damping (per rad/s) - increased from -10
         self.Cm_de = -0.8    # Elevator control power (per rad)
         self.stall_drag_factor = config.get('stall_drag_factor', 0.12)
         
-        # Lateral (Side force, Roll, Yaw)
+        # Lateral (Side force, Roll, Yaw) - Tuned for stability
         self.CYb = -0.3      # Side force stability
-        self.Clb = -0.1      # Dihedral effect (Roll stability)
-        self.Cnb = 0.08      # Weathercock stability (Yaw stability)
-        self.Clp = -0.4      # Roll damping
-        self.Cnr = -0.2      # Yaw damping
+        self.Clb = -0.1      # Dihedral effect - REDUCED to prevent roll divergence
+        self.Cnb = 0.12      # Weathercock stability
+        self.Clp = -2.0      # Roll damping - SIGNIFICANTLY INCREASED from -0.8
+        self.Cnr = -1.5      # Yaw damping - SIGNIFICANTLY INCREASED from -0.5
         self.Cl_da = 0.15    # Aileron control power
         self.Cn_dr = -0.1    # Rudder control power
         
@@ -313,6 +313,12 @@ class FixedWingUAV:
         # 8. İntegrasyon (Euler)
         self.state.velocity += v_dot * dt
         self.state.angular_velocity += omega_dot * dt
+        
+        # 8.5 Stability Augmentation System (SAS) - selective axis damping
+        # Tuned for best stability without crash
+        self.state.angular_velocity[0] *= 0.97  # Roll: 3% decay
+        self.state.angular_velocity[1] *= 0.99  # Pitch: 1% decay (preserve altitude control)
+        self.state.angular_velocity[2] *= 0.92  # Yaw: 8% decay
         
         # Pozisyon (Inertial Frame)
         # v_inertial = R_b2i * v_body

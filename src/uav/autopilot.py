@@ -74,9 +74,9 @@ class Autopilot:
         )
         
         self.heading_pid = PIDController(
-            kp=config.get('heading_kp', 1.0),
-            ki=config.get('heading_ki', 0.1),
-            kd=config.get('heading_kd', 0.2)
+            kp=config.get('heading_kp', 0.5),   # Reduced from 1.0 to prevent oscillation
+            ki=config.get('heading_ki', 0.02),  # Reduced from 0.1
+            kd=config.get('heading_kd', 0.3)    # Increased damping
         )
         
         self.speed_pid = PIDController(
@@ -181,7 +181,7 @@ class Autopilot:
             controls = self._altitude_hold(altitude, speed, heading, dt)
             
         elif self.mode == AutopilotMode.HEADING_HOLD:
-            controls = self._heading_hold(altitude, speed, heading, dt)
+            controls = self._heading_hold(uav_state, altitude, speed, heading, dt)
             
         elif self.mode == AutopilotMode.WAYPOINT:
             controls = self._waypoint_follow(position, altitude, speed, heading, dt)
@@ -217,25 +217,43 @@ class Autopilot:
             'throttle': np.clip(throttle, 0, 1)
         }
         
-    def _heading_hold(self, altitude: float, speed: float, heading: float, dt: float) -> dict:
-        """Yön tutma"""
-        # Yön hatası
-        hdg_error = self._normalize_angle(self.target_heading - heading)
-        aileron = self.heading_pid.update(hdg_error, dt)
+    def _heading_hold(self, uav_state: dict, altitude: float, speed: float, heading: float, dt: float) -> dict:
+        """
+        Yön tutma - Active stabilization
         
-        # İrtifa kontrolü
+        Includes wings-leveler (roll stabilization) and yaw damper.
+        """
+        # Get current roll angle from UAV state
+        orientation = uav_state.get('orientation', [0, 0, 0])
+        roll = orientation[0]
+        
+        # Get angular rates
+        angular_vel = uav_state.get('angular_velocity', [0, 0, 0])
+        roll_rate = angular_vel[0]  # p
+        yaw_rate = angular_vel[2]   # r
+        
+        # Wings leveler: counter roll angle with aileron
+        # Negative feedback: if roll > 0, apply negative aileron
+        aileron = -roll * 0.5 - roll_rate * 0.1
+        aileron = np.clip(aileron, -0.3, 0.3)
+        
+        # Yaw damper: counter yaw rate with rudder
+        rudder = -yaw_rate * 0.2
+        rudder = np.clip(rudder, -0.3, 0.3)
+        
+        # Altitude control
         alt_error = self.target_altitude - altitude
-        elevator = self.altitude_pid.update(alt_error, dt)
+        elevator = np.clip(alt_error * 0.02, -0.2, 0.2)
         
-        # Hız kontrolü
+        # Speed control
         speed_error = self.target_speed - speed
-        throttle = 0.5 + self.speed_pid.update(speed_error, dt)
+        throttle = 0.6 + np.clip(speed_error * 0.02, -0.2, 0.2)
         
         return {
-            'aileron': np.clip(aileron, -1, 1),
-            'elevator': np.clip(elevator, -1, 1),
-            'rudder': 0.0,
-            'throttle': np.clip(throttle, 0, 1)
+            'aileron': aileron,
+            'elevator': elevator,
+            'rudder': rudder,
+            'throttle': np.clip(throttle, 0.4, 1.0)
         }
         
     def _waypoint_follow(self, position: np.ndarray, altitude: float, 

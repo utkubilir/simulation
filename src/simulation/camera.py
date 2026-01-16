@@ -58,6 +58,9 @@ class FixedCamera:
         self.distortion_enabled = config.get('distortion_enabled', True)
         self.k1 = config.get('k1', -0.1)   # Radyal distorsiyon (barrel < 0, pincushion > 0)
         self.k2 = config.get('k2', 0.02)   # İkinci derece radyal
+        self.k3 = config.get('k3', 0.0)    # Üçüncü derece radyal (opsiyonel)
+        self.p1 = config.get('p1', 0.0)    # Tangential distorsiyon
+        self.p2 = config.get('p2', 0.0)    # Tangential distorsiyon
         
         # Kamera sarsıntısı (Perlin noise tabanlı)
         self.shake_enabled = config.get('shake_enabled', True)
@@ -128,6 +131,30 @@ class FixedCamera:
         ], dtype=np.float64)
         
         self.focal_length = fx
+
+    def set_resolution(self, width: int, height: int):
+        """Kamera çözünürlüğünü güncelle ve intrinsics hesapla."""
+        self.resolution = (int(width), int(height))
+        self._update_intrinsics()
+
+    def set_fov(self, fov: float):
+        """Kamera FOV değerini güncelle ve intrinsics hesapla."""
+        self.fov = float(fov)
+        self._update_intrinsics()
+
+    def set_distortion_params(self, k1: float = None, k2: float = None,
+                              k3: float = None, p1: float = None, p2: float = None):
+        """Lens distorsiyon parametrelerini güncelle."""
+        if k1 is not None:
+            self.k1 = float(k1)
+        if k2 is not None:
+            self.k2 = float(k2)
+        if k3 is not None:
+            self.k3 = float(k3)
+        if p1 is not None:
+            self.p1 = float(p1)
+        if p2 is not None:
+            self.p2 = float(p2)
         
     def update(self, dt: float, uav_velocity: np.ndarray = None):
         """
@@ -257,11 +284,15 @@ class FixedCamera:
         r4 = r2 * r2
         
         # Radyal distorsiyon faktörü
-        distortion_factor = 1 + self.k1 * r2 + self.k2 * r4
-        
+        distortion_factor = 1 + self.k1 * r2 + self.k2 * r4 + self.k3 * r2 * r4
+
+        # Tangential distorsiyon
+        x_tangential = 2 * self.p1 * x_norm * y_norm + self.p2 * (r2 + 2 * x_norm**2)
+        y_tangential = self.p1 * (r2 + 2 * y_norm**2) + 2 * self.p2 * x_norm * y_norm
+
         # Distorsiyon uygula
-        x_dist = x_norm * distortion_factor
-        y_dist = y_norm * distortion_factor
+        x_dist = x_norm * distortion_factor + x_tangential
+        y_dist = y_norm * distortion_factor + y_tangential
         
         # Piksel koordinatlarına geri dönüştür
         x_out = x_dist * self.focal_length + cx
@@ -1039,6 +1070,9 @@ class FixedCamera:
             'distortion_enabled': self.distortion_enabled,
             'k1': self.k1,
             'k2': self.k2,
+            'k3': self.k3,
+            'p1': self.p1,
+            'p2': self.p2,
             'shake_enabled': self.shake_enabled,
             'shake_intensity': self.shake_intensity,
             'motion_blur_enabled': self.motion_blur_enabled,
@@ -1059,5 +1093,4 @@ class FixedCamera:
 
 # Geriye uyumluluk için alias
 SimulatedCamera = FixedCamera
-
 

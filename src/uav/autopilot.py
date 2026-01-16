@@ -91,6 +91,8 @@ class Autopilot:
         # Combat Manager
         from src.uav.combat import CombatStateManager
         self.combat_manager = CombatStateManager()
+        self.camera_frame_size = (640, 480)
+        self.combat_manager.set_frame_size(self.camera_frame_size)
         
     def set_mode(self, mode: AutopilotMode):
         """Autopilot modunu değiştir"""
@@ -108,6 +110,12 @@ class Autopilot:
         # self.enabled = False  # KALDIRILDI
         # self.mode = AutopilotMode.MANUAL  # KALDIRILDI
         print("⚠️ UYARI: Tam otonom sistem - manuel mod devre dışı!")
+
+    def set_camera_frame_size(self, frame_size: Tuple[int, int]):
+        """Update camera frame size for combat visual servo."""
+        if frame_size and len(frame_size) == 2:
+            self.camera_frame_size = (int(frame_size[0]), int(frame_size[1]))
+            self.combat_manager.set_frame_size(self.camera_frame_size)
         
     def set_target_altitude(self, altitude: float):
         """Hedef irtifayı ayarla"""

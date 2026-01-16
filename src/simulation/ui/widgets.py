@@ -134,7 +134,8 @@ class Radar(Widget):
         self.radius = radius
         self.center = (x + radius, y + radius)
         
-    def render(self, surface: pygame.Surface, targets: list, player_heading: float, fov: float):
+    def render(self, surface: pygame.Surface, targets: list, player_heading: float, fov: float,
+               heading_up: bool = True):
         # Background
         pygame.draw.circle(surface, (*Colors.PANEL_BG, 150), self.center, self.radius)
         pygame.draw.circle(surface, Colors.PRIMARY_DIM, self.center, self.radius, 1)
@@ -149,13 +150,16 @@ class Radar(Widget):
         
         # Player (Center)
         # Draw small triangle
-        # TODO: Rotate triangle based on heading if North-Up, but usually Radar is Heading-Up
-        # Let's assume Heading-Up (Player facing UP)
-        pygame.draw.polygon(surface, Colors.SUCCESS, [
+        # Heading-up: fixed triangle up. North-up: rotate by player heading.
+        triangle = [
             (self.center[0], self.center[1] - 5),
             (self.center[0] - 4, self.center[1] + 4),
             (self.center[0] + 4, self.center[1] + 4)
-        ])
+        ]
+        heading_rad = math.radians(player_heading)
+        if not heading_up:
+            triangle = [self._rotate_point(p, heading_rad) for p in triangle]
+        pygame.draw.polygon(surface, Colors.SUCCESS, triangle)
         
         # FOV Lines (V shape) up
         # FOV is total angle (e.g. 60 deg)
@@ -165,12 +169,18 @@ class Radar(Widget):
         # Left line
         lx = self.center[0] + len_fov * math.sin(-half_fov)
         ly = self.center[1] - len_fov * math.cos(-half_fov)
-        pygame.draw.line(surface, (*Colors.PRIMARY, 100), self.center, (lx, ly), 1)
-        
+        left = (lx, ly)
         # Right line
         rx = self.center[0] + len_fov * math.sin(half_fov)
         ry = self.center[1] - len_fov * math.cos(half_fov)
-        pygame.draw.line(surface, (*Colors.PRIMARY, 100), self.center, (rx, ry), 1)
+        right = (rx, ry)
+
+        if not heading_up:
+            left = self._rotate_point(left, heading_rad)
+            right = self._rotate_point(right, heading_rad)
+
+        pygame.draw.line(surface, (*Colors.PRIMARY, 100), self.center, left, 1)
+        pygame.draw.line(surface, (*Colors.PRIMARY, 100), self.center, right, 1)
         
         # Targets
         # They need to be transformed from World -> Body (relative) -> Radar Screen
@@ -209,3 +219,12 @@ class Radar(Widget):
                 
             pygame.draw.circle(surface, col, (int(sx), int(sy)), 3)
 
+    def _rotate_point(self, point, angle_rad: float) -> Tuple[float, float]:
+        dx = point[0] - self.center[0]
+        dy = point[1] - self.center[1]
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        return (
+            self.center[0] + dx * cos_a - dy * sin_a,
+            self.center[1] + dx * sin_a + dy * cos_a
+        )

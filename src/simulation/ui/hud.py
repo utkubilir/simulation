@@ -13,9 +13,10 @@ class HUDOverlay:
     Manages layout and rendering of all UI components.
     """
     
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, radar_heading_mode: str = "heading_up"):
         self.width = width
         self.height = height
+        self.radar_heading_mode = radar_heading_mode
         self.fonts = {}
         self._init_fonts()
         self._init_widgets()
@@ -81,6 +82,10 @@ class HUDOverlay:
             self.spd_tape.update(uav_state.get('speed', 0))
             self.throttle_bar.value = uav_state.get('throttle', 0)
             self.battery_bar.value = uav_state.get('battery', 1.0)
+
+    def set_radar_heading_mode(self, mode: str):
+        """Set radar heading mode ('heading_up' or 'north_up')."""
+        self.radar_heading_mode = mode
     
     def _extract_score(self, lock_state: Dict) -> int:
         """Extract score value consistently regardless of format.
@@ -157,7 +162,8 @@ class HUDOverlay:
         # Need relative conversion from world_state uavs
         radar_targets = []
         player_pos = np.array(uav_state.get('position', [0,0,0]))
-        player_heading = uav_state.get('heading', 0) # radians
+        player_heading = uav_state.get('heading', 0)  # degrees
+        heading_up = self.radar_heading_mode != "north_up"
         
         # Rotation matrix for Heading Up
         # Global: X=East, Y=North. 
@@ -166,8 +172,9 @@ class HUDOverlay:
         # Actually in simulation: 0=East, 90=North. So standard math.
         # To convert Global (dx, dy) to Body (bx, by):
         # Rotate by -heading.
-        c = math.cos(-player_heading)
-        s = math.sin(-player_heading)
+        heading_rad = math.radians(player_heading)
+        c = math.cos(-heading_rad)
+        s = math.sin(-heading_rad)
         
         for uid, uav in world_state.get('uavs', {}).items():
             if uid == uav_state.get('id'): continue
@@ -175,9 +182,14 @@ class HUDOverlay:
             pos = np.array(uav.get('position', [0,0,0]))
             rel = pos - player_pos
             
-            # Rotate
-            bx = rel[0]*c - rel[1]*s
-            by = rel[0]*s + rel[1]*c
+            if heading_up:
+                # Rotate to body frame (heading-up radar)
+                bx = rel[0]*c - rel[1]*s
+                by = rel[0]*s + rel[1]*c
+                rel_pos = [bx, -by]
+            else:
+                # North-up radar: forward is North (+Y), right is East (+X)
+                rel_pos = [rel[1], rel[0]]
             
             # bx is 'East-aligned' rotated?
             # If heading=0 (East): c=1, s=0. bx=dx (East), by=dy (North).
@@ -193,12 +205,12 @@ class HUDOverlay:
             # If Y is 'North' (Left of East), and screen Right is 'Right', we need -by.
             
             radar_targets.append({
-                'rel_pos': [bx, -by], # Invert Y for 'Right' mapping
+                'rel_pos': rel_pos,
                 'type': 'enemy' if 'target' in uid else 'friend',
                 'locked': (lock_state.get('target_id') == uid)
             })
             
-        self.radar.render(surface, radar_targets, 0, 60)
+        self.radar.render(surface, radar_targets, player_heading, 60, heading_up=heading_up)
         
         # Target List
         y_off = self.list_y

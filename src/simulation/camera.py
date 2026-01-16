@@ -27,6 +27,12 @@ except ImportError:
     OPENSIMPLEX_AVAILABLE = False
 
 from src.simulation.utils import euler_to_rotation_matrix
+try:
+    from src.rendering.renderer import GLRenderer
+    OPENGL_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: OpenGL Renderer could not be imported: {e}")
+    OPENGL_AVAILABLE = False
 
 
 class FixedCamera:
@@ -37,7 +43,14 @@ class FixedCamera:
     Gerçekçi lens efektleri ve titreşim simülasyonu içerir.
     """
     
-    def __init__(self, config: dict = None):
+    
+    def __init__(self, position: List[float], config: dict = None):
+        """
+        Args:
+            position: [x, y, z] kamera konumu (NED frame)
+            config: Konfigürasyon sözlüğü
+        """
+        self.position = np.array(position, dtype=np.float32)
         config = config or {}
         
         # Temel parametreler
@@ -45,6 +58,16 @@ class FixedCamera:
         self.resolution = tuple(config.get('resolution', (640, 480)))
         self.fps = config.get('fps', 30)
         self.distortion_clamp = config.get('distortion_clamp', False)
+        
+        # OpenGL Renderer
+        self.renderer = None
+        if OPENGL_AVAILABLE:
+            try:
+                # Renderer'ı başlat (Context var varsayılır)
+                self.renderer = GLRenderer(width=self.resolution[0], height=self.resolution[1])
+            except Exception as e:
+                print(f"Failed to initialize OpenGL Renderer (Maybe no context?): {e}")
+                self.renderer = None
         
         # Sabit montaj pozisyonu (İHA gövdesine göre)
         # [ileri, sağ, aşağı] metre cinsinden
@@ -113,6 +136,19 @@ class FixedCamera:
         self.target_brightness = config.get('target_brightness', 128)
         self._current_exposure = 1.0  # Dinamik exposure faktörü
         
+        # Tonemapping (HDR)
+        self.tonemapping_enabled = config.get('tonemapping_enabled', False)
+        
+        # Atmosferik efektler (Yağmur/Kar)
+        self.rain_enabled = config.get('rain_enabled', False)
+        self.rain_density = config.get('rain_density', 0.5)
+        self.snow_enabled = config.get('snow_enabled', False)
+        self.snow_density = config.get('snow_density', 0.5)
+        
+        # Rolling shutter için durum
+        self._prev_camera_orient = None
+        self._angular_velocity = np.zeros(3)
+        
         # Kamera intrinsic matrisi
         self.K = None
         self._update_intrinsics()
@@ -137,6 +173,58 @@ class FixedCamera:
         self.focal_length = fx
         self.fov_h = np.degrees(2 * np.arctan(w / (2 * fx)))
         self.fov_v = np.degrees(2 * np.arctan(h / (2 * fy)))
+
+    def load_calibration(self, yaml_path: str):
+        """
+        OpenCV kalibrasyon dosyasından kamera parametrelerini yükle.
+        
+        Args:
+            yaml_path: YAML dosya yolu (OpenCV FileStorage formatı)
+        """
+        import yaml
+        from pathlib import Path
+        
+        path = Path(yaml_path)
+        if not path.exists():
+            print(f"Warning: Calibration file not found: {yaml_path}")
+            return
+            
+        try:
+            with open(path, 'r') as f:
+                # OpenCV YAML formatı bazen özel tagler içerir, safe_load ile dene
+                # Genelde {camera_matrix: {data: [...]}, dist_coeff: ...}
+                data = yaml.safe_load(f)
+                
+            if not data:
+                return
+                
+            # Kamera Matrisi (K)
+            if 'camera_matrix' in data:
+                km = data['camera_matrix']
+                if 'data' in km:
+                    k_data = np.array(km['data']).reshape(3, 3)
+                    self.K = k_data
+                    self.focal_length = (self.K[0,0] + self.K[1,1]) / 2
+                    
+                    # FOV güncelle
+                    w, h = self.resolution
+                    self.fov_h = np.degrees(2 * np.arctan(w / (2 * self.K[0,0])))
+                    
+            # Distorsiyon Katsayıları
+            if 'dist_coeff' in data:
+                dc = data['dist_coeff']
+                if 'data' in dc:
+                    d_data = dc['data']
+                    self.k1 = d_data[0] if len(d_data) > 0 else 0
+                    self.k2 = d_data[1] if len(d_data) > 1 else 0
+                    self.p1 = d_data[2] if len(d_data) > 2 else 0
+                    self.p2 = d_data[3] if len(d_data) > 3 else 0
+                    self.k3 = d_data[4] if len(d_data) > 4 else 0
+                    
+            print(f"Loaded calibration from {yaml_path}")
+            
+        except Exception as e:
+            print(f"Error loading calibration: {e}")
 
     def set_resolution(self, width: int, height: int):
         """Kamera çözünürlüğünü güncelle ve intrinsics hesapla."""
@@ -266,7 +354,7 @@ class FixedCamera:
         
         # Kamera dönüşüm matrisi
         R = euler_to_rotation_matrix(*camera_orient)
-        cam_coords = R.T @ rel_pos
+        cam_coords = R @ rel_pos  # World -> Camera dönüşümü (R.T değil R)
         
         # Kameranın arkasında mı?
         if cam_coords[0] <= 0.1:  # Minimum mesafe
@@ -319,6 +407,119 @@ class FixedCamera:
         y_out = y_dist * self.focal_length + cy
         
         return x_out, y_out
+    
+    def undistort_point(self, x_dist: float, y_dist: float, 
+                        iterations: int = 10) -> Tuple[float, float]:
+        """
+        Distorted koordinatları ideal koordinatlara çevir (Newton-Raphson iterasyonu).
+        
+        Detection sonuçlarını kamera kalibrasyonu için ideal koordinatlara dönüştürürken kullanılır.
+        
+        Args:
+            x_dist: Distorted x koordinatı (piksel)
+            y_dist: Distorted y koordinatı (piksel)
+            iterations: Newton-Raphson iterasyon sayısı
+            
+        Returns:
+            (x_ideal, y_ideal) ideal koordinatlar
+        """
+        w, h = self.resolution
+        cx, cy = w / 2, h / 2
+        
+        # Normalize
+        x_norm = (x_dist - cx) / self.focal_length
+        y_norm = (y_dist - cy) / self.focal_length
+        
+        # İlk tahmin: distorted = ideal (distorsiyon küçükse iyi başlangıç)
+        x_u = x_norm
+        y_u = y_norm
+        
+        for _ in range(iterations):
+            # Mevcut tahmin için distorsiyon hesapla
+            r2 = x_u**2 + y_u**2
+            r4 = r2 * r2
+            
+            # Radyal distorsiyon faktörü
+            k = 1 + self.k1 * r2 + self.k2 * r4 + self.k3 * r2 * r4
+            
+            # Tangential
+            dx = 2 * self.p1 * x_u * y_u + self.p2 * (r2 + 2 * x_u**2)
+            dy = self.p1 * (r2 + 2 * y_u**2) + 2 * self.p2 * x_u * y_u
+            
+            # Distorted tahmin
+            x_d = x_u * k + dx
+            y_d = y_u * k + dy
+            
+            # Hata
+            err_x = x_norm - x_d
+            err_y = y_norm - y_d
+            
+            # Güncelle (basit gradient descent yaklaşımı)
+            x_u += err_x
+            y_u += err_y
+            
+            # Convergence kontrolü
+            if abs(err_x) < 1e-7 and abs(err_y) < 1e-7:
+                break
+        
+        # Piksel koordinatlarına dönüştür
+        x_ideal = x_u * self.focal_length + cx
+        y_ideal = y_u * self.focal_length + cy
+        
+        return x_ideal, y_ideal
+    
+    def apply_rolling_shutter(self, frame: np.ndarray, 
+                              angular_velocity: np.ndarray,
+                              readout_time: float = 0.02) -> np.ndarray:
+        """
+        Rolling shutter efekti simülasyonu.
+        
+        Hızlı hareket eden nesnelerde "jello effect" oluşturur.
+        Her satır farklı bir zamanda okunur, bu da eğik görüntülere yol açar.
+        
+        Args:
+            frame: Giriş görüntüsü
+            angular_velocity: Kamera açısal hızı [roll_rate, pitch_rate, yaw_rate] (rad/s)
+            readout_time: Tüm frame'in okunma süresi (saniye)
+            
+        Returns:
+            Rolling shutter efekti uygulanmış görüntü
+        """
+        if angular_velocity is None or np.linalg.norm(angular_velocity) < 0.01:
+            return frame
+            
+        h, w = frame.shape[:2]
+        angular_velocity = np.array(angular_velocity)
+        
+        # Yaw ve pitch değişimi daha görünür efekt yaratır
+        yaw_rate = angular_velocity[2]   # Yatay kayma
+        pitch_rate = angular_velocity[1]  # Dikey kayma
+        
+        # Maksimum piksel kayması (efekt şiddeti)
+        max_shift_x = yaw_rate * readout_time * self.focal_length * 0.5
+        max_shift_y = pitch_rate * readout_time * self.focal_length * 0.5
+        
+        # Her satır için zaman offset'i
+        result = np.zeros_like(frame)
+        
+        for row in range(h):
+            # Bu satırın okunma zamanı (0 = üst, 1 = alt)
+            t = row / h
+            
+            # Shift miktarı (parabolik profil daha gerçekçi)
+            shift_x = int(max_shift_x * (t - 0.5) * 2)
+            shift_y = int(max_shift_y * (t - 0.5) * 2)
+            
+            # Satırı kaydır
+            if shift_x != 0:
+                if shift_x > 0:
+                    result[row, shift_x:] = frame[row, :-shift_x] if shift_x < w else 0
+                else:
+                    result[row, :shift_x] = frame[row, -shift_x:] if -shift_x < w else 0
+            else:
+                result[row] = frame[row]
+        
+        return result
         
 
         
@@ -343,7 +544,7 @@ class FixedCamera:
         """Noktanın görüş alanında olup olmadığını kontrol et"""
         rel_pos = world_point - camera_pos
         R = euler_to_rotation_matrix(*camera_orient)
-        cam_coords = R.T @ rel_pos
+        cam_coords = R @ rel_pos  # World -> Camera dönüşümü (düzeltildi)
         
         if cam_coords[0] <= 0:
             return False
@@ -353,8 +554,161 @@ class FixedCamera:
         angle_v = np.degrees(np.arctan2(abs(cam_coords[2]), cam_coords[0]))
         
         return angle_h <= self.fov_h / 2 and angle_v <= self.fov_v / 2
+    
+    def check_occlusion(self, target_pos: np.ndarray, 
+                        all_objects: List[Dict],
+                        camera_pos: np.ndarray,
+                        target_id: str = None,
+                        occlusion_radius: float = 3.0) -> Tuple[bool, Optional[str]]:
+        """
+        Hedefin başka nesneler tarafından kapatılıp kapatılmadığını kontrol et.
+        
+        Ray-sphere intersection kullanarak basit occlusion testi yapar.
+        
+        Args:
+            target_pos: Hedef pozisyonu [x, y, z]
+            all_objects: Tüm nesnelerin listesi [{'id': str, 'position': [x,y,z], 'size': float}, ...]
+            camera_pos: Kamera pozisyonu [x, y, z]
+            target_id: Hedefin ID'si (kendisini atlama için)
+            occlusion_radius: Nesne engelleyici yarıçapı (metre)
+            
+        Returns:
+            (is_occluded: bool, occluder_id: Optional[str])
+        """
+        target_pos = np.array(target_pos)
+        camera_pos = np.array(camera_pos)
+        
+        # Kameradan hedefe ray
+        ray_dir = target_pos - camera_pos
+        target_dist = np.linalg.norm(ray_dir)
+        
+        if target_dist < 0.1:
+            return False, None
+            
+        ray_dir = ray_dir / target_dist  # Normalize
+        
+        for obj in all_objects:
+            obj_id = obj.get('id', '')
+            
+            # Kendisini atla
+            if obj_id == target_id:
+                continue
+                
+            obj_pos = np.array(obj.get('position', [0, 0, 0]))
+            obj_size = obj.get('size', 2.0)
+            sphere_radius = max(occlusion_radius, obj_size)
+            
+            # Nesnenin kameraya mesafesi
+            obj_dist = np.linalg.norm(obj_pos - camera_pos)
+            
+            # Nesne hedeften uzakta ise atla
+            if obj_dist >= target_dist:
+                continue
+            
+            # Ray-Sphere intersection testi
+            # Sphere center relative to ray origin
+            oc = obj_pos - camera_pos
+            
+            # Projeksiyon - ray üzerindeki en yakın nokta
+            t = np.dot(oc, ray_dir)
+            
+            if t < 0:
+                continue  # Nesne kameranın arkasında
+                
+            # Ray'e en yakın nokta
+            closest_point = camera_pos + t * ray_dir
+            
+            # Mesafe kontrolü
+            distance_to_ray = np.linalg.norm(obj_pos - closest_point)
+            
+            if distance_to_ray < sphere_radius:
+                return True, obj_id
+                
+        return False, None
         
     def generate_synthetic_frame(self, uav_states: list,
+                               camera_pos: np.ndarray,
+                               camera_orient: np.ndarray,
+                               own_velocity: np.ndarray = None) -> np.ndarray:
+        """
+        Sentetik kamera görüntüsü oluştur (OpenGL veya CPU)
+        
+        Args:
+            uav_states: Hedef İHA listesi
+            camera_pos: Kamera pozisyonu
+            camera_orient: Kamera oryantasyonu
+            own_velocity: Kendi İHA hızı
+            
+        Returns:
+            RGB numpy array (h, w, 3)
+        """
+        # OpenGL Render Path
+        if self.renderer:
+            # 1. Sahne Başlat
+            self.renderer.begin_frame()
+            
+            # 2. Kamera Güncelle
+            self.renderer.update_camera(position=camera_pos, rotation=camera_orient)
+            
+            # 3. İHA'ları Çiz
+            for uav in uav_states:
+                pos = np.array(uav['position'])
+                
+                # Görünürlük kontrolü (Basit frustum culling)
+                if not self.is_in_fov(pos, camera_pos, camera_orient):
+                    continue
+                    
+                # Occlusion kontrolü
+                is_occluded, _ = self.check_occlusion(pos, uav_states, camera_pos, target_id=uav['id'])
+                if is_occluded:
+                    continue
+                
+                # İHA Yönelimi
+                heading = np.radians(uav.get('heading', 0.0))
+                roll = np.radians(uav.get('roll', 0.0))
+                pitch = np.radians(uav.get('pitch', 0.0))
+                
+                # Renk: Player (Kırmızı), Enemy (Mavi)
+                color = (1.0, 0.0, 0.0) if uav.get('is_player', False) else (0.0, 0.0, 1.0)
+                
+                self.renderer.render_aircraft(
+                    position=pos,
+                    heading=heading,
+                    roll=roll,
+                    pitch=pitch,
+                    color=color
+                )
+            
+            # 4. Sahne Bitir (Post-Process & Draw)
+            self.renderer.end_frame()
+            
+            # 5. CPU'ya Oku
+            frame = self.renderer.read_pixels()
+            
+            # Açısal hız hesabı (Noise ve Rolling Shutter için)
+            if self._prev_camera_orient is not None:
+                dt_est = 1.0 / self.fps if self.fps > 0 else 0.033
+                diff = camera_orient - self._prev_camera_orient
+                diff = (diff + np.pi) % (2 * np.pi) - np.pi
+                self._angular_velocity = diff / dt_est
+            self._prev_camera_orient = camera_orient.copy()
+            
+            # 6. CPU Bazlı Efektler (Hali hazırda Shader'da olmayanlar)
+            
+            # Rolling Shutter (Opsiyonel - Shader ile de yapılabilir ama şimdilik CPU)
+            # frame = self.apply_rolling_shutter(frame, self._angular_velocity)
+            
+            # Sensor Noise
+            if self.sensor_noise_enabled:
+                frame = self._apply_sensor_noise(frame)
+                
+            return frame
+            
+        # Fallback: CPU Render Path
+        else:
+            return self._generate_synthetic_frame_cpu(uav_states, camera_pos, camera_orient, own_velocity)
+        
+    def _generate_synthetic_frame_cpu(self, uav_states: list,
                                  camera_pos: np.ndarray,
                                  camera_orient: np.ndarray,
                                  own_velocity: np.ndarray = None) -> np.ndarray:
@@ -393,6 +747,30 @@ class FixedCamera:
             frame = self._apply_depth_of_field(frame, uav_states, camera_pos)
             
         # 5. Post-processing efektleri
+        # 4.5. Atmosferik Efektler (Rain/Snow)
+        if self.rain_enabled:
+            frame = self._apply_rain_snow(frame, 'rain', self.rain_density)
+        if self.snow_enabled:
+            frame = self._apply_rain_snow(frame, 'snow', self.snow_density)
+
+        # 5. Post-processing efektleri
+        
+        # Açısal hız hesabı (Rolling shutter için)
+        if self._prev_camera_orient is not None:
+            # Basit fark (frame hızı 60fps varsayımı - veya dt parametresi eklenmeli)
+            # generate_synthetic_frame dt almıyor, o yüzden yaklaşık hesap
+            # Veya update() metodunda hesaplanıp saklanmalı.
+            # Şimdilik basit fark (dt=0.016 gibi)
+            dt_est = 1.0 / self.fps if self.fps > 0 else 0.033
+            diff = camera_orient - self._prev_camera_orient
+            # Wrap angles
+            diff = (diff + np.pi) % (2 * np.pi) - np.pi
+            self._angular_velocity = diff / dt_est
+        self._prev_camera_orient = camera_orient.copy()
+        
+        # Rolling Shutter (Hızlı hareketlerde jello effect)
+        frame = self.apply_rolling_shutter(frame, self._angular_velocity)
+        
         if self.motion_blur_enabled and own_velocity is not None:
             frame = self._apply_motion_blur(frame, own_velocity, camera_orient)
             
@@ -410,6 +788,9 @@ class FixedCamera:
             
         if self.auto_exposure_enabled:
             frame = self._apply_auto_exposure(frame)
+            
+        if self.tonemapping_enabled:
+            frame = self._apply_tonemapping(frame)
             
         return frame
 
@@ -516,8 +897,8 @@ class FixedCamera:
             diffuse = max(0.2, np.dot(normal, sun_dir))
             face_color = tuple(min(255, int(c * (0.5 + diffuse * 0.5))) for c in color)
             
-            cv2.fillPoly(frame, [pts_int], face_color)
-            cv2.polylines(frame, [pts_int], True, tuple(min(255, c+30) for c in face_color), 1)
+            cv2.fillPoly(frame, [pts_int], face_color, lineType=cv2.LINE_AA)
+            cv2.polylines(frame, [pts_int], True, tuple(min(255, c+30) for c in face_color), 1, lineType=cv2.LINE_AA)
 
     def _render_shadow(self, frame: np.ndarray, uav: dict,
                        camera_pos: np.ndarray, camera_orient: np.ndarray):
@@ -578,7 +959,7 @@ class FixedCamera:
         # Or simpler: transform [1,0,0] (forward) by R
         R = euler_to_rotation_matrix(*camera_orient)
         camera_forward = R @ np.array([1, 0, 0])
-        cam_coords = (R.T @ rel_pos.T).T  # (N, 3)
+        cam_coords = (R @ rel_pos.T).T  # (N, 3)  World -> Camera dönüşümü
         
         # Kameranın arkasındakileri filtrele
         valid_mask = cam_coords[:, 0] > 0.1
@@ -1028,19 +1409,26 @@ class FixedCamera:
         
     def _apply_sensor_noise(self, frame: np.ndarray) -> np.ndarray:
         """
-        Kamera sensör gürültüsü simülasyonu
+        Kamera sensör gürültüsü simülasyonu (Temporal destekli)
         
         ISO değerine göre Gaussian gürültü ekler.
-        Yüksek ISO = daha fazla gürültü
+        Temporal korelasyon ile gürültü zamanla yumuşak değişir.
         """
         # ISO'ya göre gürültü seviyesi (100=düşük, 6400=yüksek)
         noise_level = np.sqrt(self.iso / 100.0) * 5.0
         
-        # Gaussian gürültü oluştur
-        noise = np.random.normal(0, noise_level, frame.shape)
+        # Yeni gürültü örneği
+        current_noise = np.random.normal(0, noise_level, frame.shape).astype(np.float32)
         
+        # Temporal smoothing (varsa önceki gürültü ile karıştır)
+        if hasattr(self, '_prev_noise') and self._prev_noise is not None and self._prev_noise.shape == frame.shape:
+             # %20 eski, %80 yeni (flicker azaltır)
+            self._prev_noise = 0.2 * self._prev_noise + 0.8 * current_noise
+        else:
+            self._prev_noise = current_noise
+            
         # Uygula
-        noisy = frame.astype(np.float32) + noise
+        noisy = frame.astype(np.float32) + self._prev_noise
         result = np.clip(noisy, 0, 255).astype(np.uint8)
         
         return result
@@ -1073,6 +1461,87 @@ class FixedCamera:
         result = frame.astype(np.float32) * self._current_exposure
         result = np.clip(result, 0, 255).astype(np.uint8)
         
+        return result
+
+    def _apply_tonemapping(self, frame: np.ndarray) -> np.ndarray:
+        """
+        HDR -> LDR Tonemapping (Reinhard operatörü)
+        
+        Yüksek dinamik aralıklı görüntüleri ekran için sıkıştırır.
+        Parlak alanlardaki detayları korur.
+        """
+        # Normalize (0-1)
+        img_float = frame.astype(np.float32) / 255.0
+        
+        # Reinhard Tonemapping: L / (1 + L)
+        # Gamma correction ile birlikte (gamma=2.2)
+        gamma = 2.2
+        mapped = img_float / (1 + img_float)
+        mapped = np.power(mapped, 1.0 / gamma)
+        
+        # Scale back to 0-255
+        result = np.clip(mapped * 255, 0, 255).astype(np.uint8)
+        return result
+
+    def _apply_rain_snow(self, frame: np.ndarray, 
+                         type: str = 'rain', 
+                         density: float = 0.5) -> np.ndarray:
+        """
+        Yağmur veya Kar Efekti 
+        
+        Args:
+            type: 'rain' veya 'snow'
+            density: Yoğunluk (0.0 - 1.0)
+        """
+        h, w = frame.shape[:2]
+        overlay = np.zeros_like(frame)
+        
+        if type == 'rain':
+            # Yağmur çizgileri
+            num_drops = int(500 * density)
+            
+            # Rastgele başlangıç noktaları
+            for _ in range(num_drops):
+                x = np.random.randint(0, w)
+                y = np.random.randint(0, h)
+                
+                # Eğimli çizgiler (rüzgar etkisi)
+                length = np.random.randint(10, 30)
+                angle = np.radians(75) # Hafif eğik
+                
+                x2 = int(x + length * np.cos(angle))
+                y2 = int(y + length * np.sin(angle))
+                
+                color = (200, 200, 200) # Gri-beyaz
+                cv2.line(overlay, (x, y), (x2, y2), color, 1)
+                
+            # Blur (hareket hissi)
+            overlay = cv2.blur(overlay, (3, 3))
+            
+            # Blend - Screen mode benzeri (sadece parlaklık ekle)
+            result = cv2.add(frame, overlay)
+            
+        elif type == 'snow':
+            # Kar taneleri
+            num_flakes = int(200 * density)
+            
+            for _ in range(num_flakes):
+                x = np.random.randint(0, w)
+                y = np.random.randint(0, h)
+                r = np.random.randint(1, 4)
+                
+                color = (255, 255, 255)
+                cv2.circle(overlay, (x, y), r, color, -1)
+                
+            # Hafif blur
+            overlay = cv2.GaussianBlur(overlay, (3, 3), 0)
+            
+            # Blend
+            result = cv2.addWeighted(frame, 1.0, overlay, 0.8, 0)
+            
+        else:
+            return frame
+            
         return result
         
     def get_config(self) -> dict:

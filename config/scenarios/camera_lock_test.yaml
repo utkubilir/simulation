@@ -1,0 +1,64 @@
+# Camera Lock Test Scenario - SABİT KAMERA
+# Player İHA sabit duruyor, rakipler kameraya doğru geliyor
+
+name: camera_lock_test
+description: Sabit kamera testi - İHA hareketsiz, rakipler kameraya yaklaşıyor
+difficulty: easy
+expected_detection: true
+expected_lock: true
+expected_min_detections: 100
+expected_min_valid_locks: 5
+duration: 60.0
+
+# Player UAV - SABİT DURACAK
+own_uav:
+  position: [500, 500, 100]
+  heading: 0        # Doğuya bakıyor (x+ yönü)
+  speed: 0.0
+  behavior: stationary   # FİZİK GÜNCELLEMESİ YOK
+
+# Hedefler - Kameraya DOĞRU hareket edecekler
+targets:
+  # Hedef 1 - Doğrudan önden yaklaşıyor
+  - id: target_front_1
+    position: [700, 500, 100]    # 200m önde
+    heading: 180                  # Player'a doğru bakıyor
+    team: red
+    behavior: straight
+    behavior_params:
+      base_speed: 15.0   # Yavaş yaklaşma
+      
+  # Hedef 2 - Biraz yukarıdan yaklaşıyor
+  - id: target_front_2
+    position: [650, 520, 110]    # 150m önde, sağda, biraz yukarda
+    heading: 180
+    team: red
+    behavior: straight
+    behavior_params:
+      base_speed: 12.0
+      
+  # Hedef 3 - Biraz aşağıdan yaklaşıyor
+  - id: target_front_3
+    position: [600, 480, 90]     # 100m önde, solda, biraz aşağıda
+    heading: 180
+    team: red
+    behavior: straight
+    behavior_params:
+      base_speed: 10.0
+
+camera:
+  fov: 60
+  resolution: [640, 480]
+
+lock:
+  success_duration: 4.0
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+
+notes: >
+  SABİT KAMERA TESTİ:
+  - Player İHA tamamen sabit (stationary behavior)
+  - 3 rakip İHA kameraya doğru yaklaşıyor
+  - Tüm hedefler baştan görüş alanında
+  - Lock-on geliştirmesi için ideal test ortamı

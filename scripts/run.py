@@ -123,7 +123,20 @@ class SimulationRunner:
                 height=config.get('simulation', {}).get('window_height', 720),
                 radar_heading_mode=radar_heading_mode
             )
-            self.camera = SimulatedCamera(config.get('camera', {}))
+            # Position should come from config or default to something sensible
+            camera_config = config.get('camera', {})
+            # Default position: 100m up, looking down-ish (handled by mount orientation)
+            # Actually FixedCamera assumes it's mounted on UAV?
+            # Reading init doc says: "Sabit montaj pozisyonu (İHA gövdesine göre)" BUT constructor takes 'position'.
+            # Wait, FixedCamera doc says "Yer istasyonundaki sabit kamerayı ve gimbal sistemini simüle eder." -> NO.
+            # It says "Sabit Monte Edilmiş Kamera Simülasyonu" at top of file.
+            # But the new __init__ takes 'position'.
+            # If it's attached to UAV, position is relative? Or initial world pos?
+            # Reviewing camera.py again... "self.position = np.array(position..."
+            # If it is mounted on UAV, update() usually overrides position.
+            # Let's provide a default initial position.
+            initial_pos = [0, 0, -100]
+            self.camera = SimulatedCamera(initial_pos, camera_config)
             self.controller = FlightController()
             self.keyboard = KeyboardMapper()
             self.autopilot = Autopilot()
@@ -161,23 +174,31 @@ class SimulationRunner:
         
         # 1. Spawn Player
         player_config = self.config.get('player', {})
+        # own_uav formatı da destekle (SimulationCore uyumluluğu)
+        if not player_config and 'own_uav' in self.config:
+            player_config = self.config['own_uav']
+            
         position = player_config.get('position', [500, 500, 100])
         heading = player_config.get('heading', 45)
         speed = player_config.get('speed', 25.0)
+        behavior = player_config.get('behavior', 'normal')  # "stationary" veya "normal"
         
         player = self.world.spawn_uav(
             uav_id='player',
             team='blue',
             position=position,
             heading=heading,
-            is_player=True
+            is_player=True,
+            behavior=behavior  # Stationary desteği
         )
-        # Set initial speed if supported (FixedWingUAV initializes with velocity based on heading * speed)
-        # We might need to manually set velocity if spawn_uav doesn't take speed.
-        # FixedWingUAV.reset takes position and heading, but maybe not speed?
-        # Let's check FixedWingUAV later. For now, assume speed needs setting.
-        # FixedWingUAV expects body-frame velocity (u, v, w).
-        player.state.velocity = np.array([speed, 0.0, 0.0])
+        
+        # Set velocity based on behavior
+        if behavior == 'stationary':
+            # SABİT KAMERA: Hareket yok
+            player.state.velocity = np.array([0.0, 0.0, 0.0])
+        else:
+            # Normal uçuş: İleri hız ver
+            player.state.velocity = np.array([speed, 0.0, 0.0])
         
         # 2. Spawn Enemies
         enemies = self.config.get('enemies', [])

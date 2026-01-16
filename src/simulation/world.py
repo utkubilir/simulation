@@ -47,7 +47,8 @@ class SimulationWorld:
         
     def spawn_uav(self, uav_id: str = None, team: str = "blue",
                   position: List[float] = None, heading: float = 0.0,
-                  is_player: bool = False, config: dict = None) -> FixedWingUAV:
+                  is_player: bool = False, config: dict = None,
+                  behavior: str = "normal") -> FixedWingUAV:
         """
         Yeni İHA ekle
         
@@ -58,6 +59,7 @@ class SimulationWorld:
             heading: Başlangıç yönü (derece)
             is_player: Oyuncu kontrolündeki İHA mı?
             config: İHA konfigürasyonu
+            behavior: "normal" veya "stationary" (fizik güncellemesi yok)
         """
         if uav_id is None:
             uav_id = f"uav_{len(self.uavs):03d}"
@@ -71,6 +73,7 @@ class SimulationWorld:
             
         uav = FixedWingUAV(config=config, uav_id=uav_id, team=team)
         uav.reset(position=np.array(position), heading=np.radians(heading))
+        uav.behavior = behavior  # "stationary" ise update() çalışmaz
         
         self.uavs[uav_id] = uav
         

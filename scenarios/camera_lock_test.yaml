@@ -1,0 +1,58 @@
+# Camera Lock Test - TEK SABİT HEDEF
+# Hem player hem hedef sabit - saf kilitlenme testi
+
+name: camera_lock_test
+description: Tek sabit hedef ile kilitlenme testi
+difficulty: easy
+duration: 60.0
+
+# Player - SABİT
+player:
+  position: [500, 500, 100]
+  heading: 0
+  speed: 0.0
+  behavior: stationary
+
+own_uav:
+  position: [500, 500, 100]
+  heading: 0
+  speed: 0.0
+  behavior: stationary
+
+# TEK SABİT HEDEF - Kameranın tam önünde
+enemies:
+  - id: target_static
+    position: [600, 500, 100]
+    heading: 180
+    speed: 0.0
+    behavior: stationary   # SABİT - yerçekimi YOK
+
+targets:
+  - id: target_static
+    position: [600, 500, 100]
+    heading: 180
+    team: red
+    behavior: stationary   # SABİT - fizik yok
+    behavior_params:
+      base_speed: 0.0
+
+# Kamera - SABİT, sarsıntı yok
+camera:
+  fov: 60
+  width: 640
+  height: 480
+  mount_pitch: 0
+  shake_enabled: false
+  shake_intensity: 0.0
+
+lock:
+  success_duration: 4.0
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+
+notes: >
+  TAM SABİT KİLİTLENME TESTİ:
+  - Player SABİT (behavior: stationary)
+  - Hedef SABİT (behavior: stationary) - yerçekimi YOK
+  - Kamera sarsıntısı KAPALI

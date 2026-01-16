@@ -1,0 +1,16 @@
+{
+  "duration": 5.949999999999984,
+  "total_frames": 358,
+  "correct_locks": 0,
+  "incorrect_locks": 0,
+  "final_score": 0,
+  "success_lock_count": 0,
+  "time_to_first_valid_lock": null,
+  "time_to_first_success_lock": null,
+  "valid_lock_time_total": 0.0,
+  "valid_lock_ratio": 0.0,
+  "longest_continuous_lock": 0.0,
+  "invalid_reason_counts": {},
+  "total_detections": 148,
+  "detection_rate": 24.873949579831997
+}

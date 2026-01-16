@@ -37,6 +37,7 @@ class OwnUAVDefinition:
     heading: float = 0.0
     altitude: Optional[float] = None
     speed: Optional[float] = None
+    behavior: str = "normal"  # "normal" veya "stationary"
 
 
 @dataclass
@@ -81,7 +82,8 @@ class ScenarioDefinition:
             position=own_data.get('position', [500, 500, 100]),
             heading=own_data.get('heading', 0),
             altitude=own_data.get('altitude'),
-            speed=own_data.get('speed')
+            speed=own_data.get('speed'),
+            behavior=own_data.get('behavior', 'normal')
         )
         
         # Parse targets

@@ -48,8 +48,8 @@ def project_point_simple(world_point: np.ndarray,
     R = euler_to_rotation_matrix(*camera_orient)
     
     # World -> Camera coordinates
-    # R transforms World vector to Body vector
-    cam_coords = R.T @ rel_pos
+    # R transforms World vector to Body/Camera vector
+    cam_coords = R @ rel_pos
     
     # Behind camera check
     if cam_coords[0] <= 0.1:

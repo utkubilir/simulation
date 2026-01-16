@@ -203,12 +203,14 @@ class SimulationCore:
             
         # Spawn own UAV
         own = scenario.own_uav
+        player_behavior = getattr(own, 'behavior', 'normal')
         self.world.spawn_uav(
             uav_id='player',
             team='blue',
             position=own.position,
             heading=own.heading,
-            is_player=True
+            is_player=True,
+            behavior=player_behavior  # "stationary" için fizik güncellenmez
         )
         
         # Spawn targets with behaviors

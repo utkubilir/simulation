@@ -1,0 +1,53 @@
+camera:
+  fov: 60
+  height: 480
+  width: 640
+description: Tek sabit hedef ile kilitlenme testi
+difficulty: easy
+duration: 60.0
+enemies:
+- behavior: straight
+  heading: 180
+  id: target_static
+  position:
+  - 600
+  - 500
+  - 100
+  speed: 0.0
+lock:
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+  success_duration: 4.0
+name: camera_lock_test
+notes: "EN BAS\u0130T K\u0130L\u0130TLENME TEST\u0130: - Player SAB\u0130T - Tek hedef\
+  \ SAB\u0130T, 100m \xF6nde - Ba\u015Far\u0131l\u0131 kilitlenme OLMALI\n"
+own_uav:
+  behavior: stationary
+  heading: 0
+  position:
+  - 500
+  - 500
+  - 100
+  speed: 0.0
+player:
+  behavior: stationary
+  heading: 0
+  position:
+  - 500
+  - 500
+  - 100
+  speed: 0.0
+scenario: camera_lock_test
+seed: 42
+targets:
+- behavior: straight
+  behavior_params:
+    base_speed: 0.0
+  heading: 180
+  id: target_static
+  position:
+  - 600
+  - 500
+  - 100
+  team: red

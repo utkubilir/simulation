@@ -24,6 +24,11 @@ try:
     from opensimplex import OpenSimplex
     OPENSIMPLEX_AVAILABLE = True
 except ImportError:
+    import warnings
+    warnings.warn(
+        "OpenSimplex not available. Camera shake will use sinusoidal fallback.", 
+        ImportWarning
+    )
     OPENSIMPLEX_AVAILABLE = False
 
 from src.simulation.utils import euler_to_rotation_matrix
@@ -270,9 +275,10 @@ class FixedCamera:
         self.sun_direction = self._normalize_vector(np.array(direction))
 
     def _normalize_vector(self, vec: np.ndarray) -> np.ndarray:
+        """Normalize vector, returning default forward vector [1,0,0] if zero-length."""
         norm = np.linalg.norm(vec)
-        if norm == 0:
-            return vec
+        if norm < 1e-10:  # Near-zero threshold instead of exact zero
+            return np.array([1.0, 0.0, 0.0])  # Default forward direction
         return vec / norm
         
     def update(self, dt: float, uav_velocity: np.ndarray = None):
@@ -1541,19 +1547,19 @@ class FixedCamera:
         return blurred
 
     def _apply_rain_snow(self, frame: np.ndarray, 
-                         type: str = 'rain', 
+                         effect_type: str = 'rain', 
                          density: float = 0.5) -> np.ndarray:
         """
         Yağmur veya Kar Efekti 
         
         Args:
-            type: 'rain' veya 'snow'
+            effect_type: 'rain' veya 'snow'
             density: Yoğunluk (0.0 - 1.0)
         """
         h, w = frame.shape[:2]
         overlay = np.zeros_like(frame)
         
-        if type == 'rain':
+        if effect_type == 'rain':
             # Yağmur çizgileri
             num_drops = int(500 * density)
             
@@ -1578,7 +1584,7 @@ class FixedCamera:
             # Blend - Screen mode benzeri (sadece parlaklık ekle)
             result = cv2.add(frame, overlay)
             
-        elif type == 'snow':
+        elif effect_type == 'snow':
             # Kar taneleri
             num_flakes = int(200 * density)
             

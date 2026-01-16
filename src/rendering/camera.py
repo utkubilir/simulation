@@ -1,3 +1,25 @@
+"""
+OpenGL Camera System for Simulation
+
+Coordinate System Mapping:
+--------------------------
+Simulation (NED-like):     OpenGL Convention:
+  +X = Forward               +X = Right  
+  +Y = Right                 +Y = Up
+  +Z = Down                  +Z = Toward Camera (out of screen)
+
+Transformation Notes:
+- Simulation uses NED-like coordinates where +Z points down
+- OpenGL uses a right-handed coordinate system where -Z is forward
+- The view matrix transforms world coordinates to camera space
+- Shader code may need to account for coordinate flipping
+
+Euler Angle Convention (Simulation):
+  - Roll: Rotation around X-axis (forward)
+  - Pitch: Rotation around Y-axis (right) 
+  - Yaw: Rotation around Z-axis (down)
+"""
+
 import numpy as np
 import pyrr
 
@@ -5,6 +27,9 @@ class GLCamera:
     """
     OpenGL Kamera Sistemi.
     View ve Projection matrislerini hesaplar ve yönetir.
+    
+    Handles coordinate transformation between simulation space and OpenGL camera space.
+    See module docstring for coordinate system details.
     """
     def __init__(self, fov=60.0, aspect_ratio=1.33, near=0.1, far=1000.0):
         self.fov = fov

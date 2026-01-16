@@ -140,7 +140,6 @@ class GLRenderer:
         except Exception as e:
             print(f"Shader yükleme hatası ({vs_name}, {fs_name}): {e}")
             raise e
-            raise e
             
     def _load_assets(self):
         """Load Textures"""
@@ -169,7 +168,8 @@ class GLRenderer:
                 print(f"Failed to load sky texture: {e}")
                 self.tex_sky = None
         else:
-            print("Sky texture not found.")
+            import warnings
+            warnings.warn(f"Sky texture not found at {sky_path}. Rendering may be affected.", UserWarning)
             self.tex_sky = None
             
         # 2. Ground Texture
@@ -192,6 +192,8 @@ class GLRenderer:
                  print(f"Failed to load ground texture: {e}")
                  self.tex_ground = None
         else:
+            import warnings
+            warnings.warn(f"Ground texture not found at {ground_path}. Rendering may be affected.", UserWarning)
             self.tex_ground = None
             
     def update_camera(self, position, rotation):
@@ -230,35 +232,11 @@ class GLRenderer:
         
         self.vao_aircraft.render()
 
-    def render(self):
-        """Sahne render döngüsü"""
-        # --- PASS 1: Off-screen Render ---
-        self.fbo.use()
-        self.ctx.clear(0.5, 0.7, 0.9) # Sky color
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        
-        # 1. Grid Çizimi
-        self.prog_grid['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-        self.prog_grid['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-        self.vao_grid.render()
-        
-        # NOT: render_aircraft çağrıları bu araya girmeli.
-        # Ancak render() metodu scene managment yapmadığı için 
-        # buradaki tasarımda render_aircraft() çağrıları FBO bağlıyken yapılmalı.
-        # Bu yüzden render() metodunu 'begin_frame' ve 'end_frame' olarak ayırmalıyız
-        # Veya render() metodu FBO bind/unbind işlemlerini yönetmeli ve draw_queued_objects gibi çalışmalı.
-        
-        # Design Update:
-        # GLRenderer.begin_frame() -> FBO bind
-        # ... render_aircraft() ...
-        # GLRenderer.end_frame() -> FBO unbind & Post Process Draw
+    # NOTE: render() method removed - use begin_frame() / render_aircraft() / end_frame() pattern instead
         
     def begin_frame(self):
         """Render döngüsünü başlat (FBO Bind)"""
         self.fbo.use()
-        self.ctx.clear(0.5, 0.7, 0.9)
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        
         self.ctx.clear(0.5, 0.7, 0.9)
         self.ctx.enable(moderngl.DEPTH_TEST)
         

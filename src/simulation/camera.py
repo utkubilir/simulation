@@ -44,6 +44,7 @@ class FixedCamera:
         self.fov = config.get('fov', 60.0)  # derece
         self.resolution = tuple(config.get('resolution', (640, 480)))
         self.fps = config.get('fps', 30)
+        self.distortion_clamp = config.get('distortion_clamp', False)
         
         # Sabit montaj pozisyonu (İHA gövdesine göre)
         # [ileri, sağ, aşağı] metre cinsinden
@@ -134,6 +135,8 @@ class FixedCamera:
         ], dtype=np.float64)
         
         self.focal_length = fx
+        self.fov_h = np.degrees(2 * np.arctan(w / (2 * fx)))
+        self.fov_v = np.degrees(2 * np.arctan(h / (2 * fy)))
 
     def set_resolution(self, width: int, height: int):
         """Kamera çözünürlüğünü güncelle ve intrinsics hesapla."""
@@ -276,9 +279,13 @@ class FixedCamera:
         # Lens distorsiyon uygula
         if self.distortion_enabled:
             x, y = self._apply_distortion(x, y)
-        
+
         # Ekran sınırları
         w, h = self.resolution
+        if self.distortion_clamp:
+            x = float(np.clip(x, 0, w - 1))
+            y = float(np.clip(y, 0, h - 1))
+            return (x, y)
         if 0 <= x < w and 0 <= y < h:
             return (x, y)
         return None
@@ -345,7 +352,7 @@ class FixedCamera:
         angle_h = np.degrees(np.arctan2(abs(cam_coords[1]), cam_coords[0]))
         angle_v = np.degrees(np.arctan2(abs(cam_coords[2]), cam_coords[0]))
         
-        return angle_h <= self.fov / 2 and angle_v <= self.fov / 2 * (self.resolution[1] / self.resolution[0])
+        return angle_h <= self.fov_h / 2 and angle_v <= self.fov_v / 2
         
     def generate_synthetic_frame(self, uav_states: list,
                                  camera_pos: np.ndarray,
@@ -1077,6 +1084,7 @@ class FixedCamera:
             'mount_offset': self.mount_offset.tolist(),
             'mount_pitch': np.degrees(self.mount_pitch),
             'distortion_enabled': self.distortion_enabled,
+            'distortion_clamp': self.distortion_clamp,
             'k1': self.k1,
             'k2': self.k2,
             'k3': self.k3,

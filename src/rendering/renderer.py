@@ -175,7 +175,7 @@ class GLRenderer:
         self.prog_grid['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
         self.vao_grid.render()
         
-    def end_frame(self):
+    def end_frame(self, time=0.0):
         """Render döngüsünü bitir (Post-Process & Draw to Output FBO)"""
         # --- PASS 2: Post Processing ---
         # Output framebuffer'a geç (Ekran DEĞİL, fbo_post)
@@ -190,6 +190,10 @@ class GLRenderer:
         self.prog_post['screenTexture'].value = 0
         self.prog_post['depthTexture'].value = 1
         
+        # Update Time for Noise
+        if 'time' in self.prog_post:
+            self.prog_post['time'].value = time
+
         # DoF Parameters (Sabit veya dinamik)
         # Focus distance: Kamera önündeki hedef (örn: 20m)
         self.prog_post['focusDistance'].value = 20.0 

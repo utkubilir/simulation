@@ -680,7 +680,7 @@ class FixedCamera:
                 )
             
             # 4. Sahne Bitir (Post-Process & Draw)
-            self.renderer.end_frame()
+            self.renderer.end_frame(time=self._noise_time)
             
             # 5. CPU'ya Oku
             frame = self.renderer.read_pixels()
@@ -698,9 +698,9 @@ class FixedCamera:
             # Rolling Shutter (Opsiyonel - Shader ile de yapılabilir ama şimdilik CPU)
             # frame = self.apply_rolling_shutter(frame, self._angular_velocity)
             
-            # Sensor Noise
-            if self.sensor_noise_enabled:
-                frame = self._apply_sensor_noise(frame)
+            # Sensor Noise (Now handled in Shader)
+            # if self.sensor_noise_enabled:
+            #     frame = self._apply_sensor_noise(frame)
                 
             return frame
             

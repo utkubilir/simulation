@@ -125,7 +125,17 @@ class TestEasyLockDeterminism:
         # To test file hash, we must run via CLI or ensure file logging is enabled.
         # Let's rely on the CLI runner test in test_determinism.py for file hashes if this is pure unit test.
         # BUT the prompt asks for it here. So let's run a quick CLI check.
-        pass
+        output1 = tmp_path / "run1" / "frames.jsonl"
+        with FrameLogger(output1) as logger:
+            logger.log_frames(states1)
+        hash1 = sha256_file(output1)
+
+        output2 = tmp_path / "run2" / "frames.jsonl"
+        with FrameLogger(output2) as logger:
+            logger.log_frames(states2)
+        hash2 = sha256_file(output2)
+
+        assert hash1 == hash2, "frames.jsonl hash mismatch across identical runs"
         
     def test_easy_lock_file_determinism(self, tmp_path):
         """Run valid CLI command to check file hash determinism."""

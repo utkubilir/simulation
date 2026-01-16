@@ -17,6 +17,8 @@ import logging
 from src.simulation.utils import project_point_simple
 from abc import ABC, abstractmethod
 
+logger = logging.getLogger(__name__)
+
 class BaseDetector(ABC):
     """
     Abstract base class for all detectors.
@@ -392,5 +394,4 @@ class SimulationDetector(BaseDetector):
         
         return confidence
         
-
 

@@ -29,16 +29,13 @@ class AirDefenseZone:
     
     Şartname 6.3:
     - Sanal daireler
-    - Dikey eksende sonsuz yükseklik (isteğe bağlı irtifa sınırı)
+    - Dikey eksende sonsuz yükseklik
     - Fiziksel müdahale yok (sadece ceza)
     """
     id: str
     center: Tuple[float, float]          # (x, y) merkez
     radius: float                         # Yarıçap (metre)
     zone_type: ZoneType = ZoneType.AIR_DEFENSE
-    penalty_per_second: int = 0           # -puan/saniye (bölge tipine göre)
-    min_alt: Optional[float] = None       # Minimum irtifa (metre)
-    max_alt: Optional[float] = None       # Maksimum irtifa (metre)
     
     # Zamanlama
     activation_time: float = 0.0         # Aktifleşme zamanı (saniye)
@@ -52,16 +49,11 @@ class AirDefenseZone:
         """
         Pozisyon bölge içinde mi?
         
-        Not: Dikey eksende sonsuz yükseklik (min/max irtifa verilmediyse)
+        Not: Dikey eksende sonsuz yükseklik
         """
         if not self.is_active:
             return False
 
-        if self.min_alt is not None and position[2] < self.min_alt:
-            return False
-        if self.max_alt is not None and position[2] > self.max_alt:
-            return False
-            
         dx = position[0] - self.center[0]
         dy = position[1] - self.center[1]
         
@@ -99,10 +91,7 @@ class AirDefenseManager:
     
     # Şartname sabitleri
     WARNING_ADVANCE_SEC = 60.0        # 1 dakika önceden uyarı
-    PENALTY_PER_SECOND_BY_TYPE = {
-        ZoneType.AIR_DEFENSE: -5,
-        ZoneType.SIGNAL_JAMMING: -2
-    }
+    PENALTY_PER_SECOND = -5           # -5 puan/saniye
     MAX_VIOLATION_SEC = 30.0          # 30 saniye limit
     SAFE_DISTANCE = 50.0              # Güvenli mesafe (kaçınma için)
     
@@ -110,8 +99,8 @@ class AirDefenseManager:
         # Bölgeler
         self.zones: Dict[str, AirDefenseZone] = {}
         
-        # Her UAV ve bölge için ihlal takibi
-        self.violation_time: Dict[str, Dict[str, float]] = {}
+        # Her UAV için ihlal takibi
+        self.violation_time: Dict[str, float] = {}
         self.total_penalty: int = 0
         
         # Uyarılar ve loglar
@@ -177,22 +166,11 @@ class AirDefenseManager:
             if zone_data.get('type') == 'signal_jamming':
                 zone_type = ZoneType.SIGNAL_JAMMING
 
-            min_alt = zone_data.get('min_alt')
-            max_alt = zone_data.get('max_alt')
-
-            penalty = zone_data.get(
-                'penalty_per_second',
-                self.PENALTY_PER_SECOND_BY_TYPE.get(zone_type, 0)
-            )
-
             zone = AirDefenseZone(
                 id=zone_id,
                 center=tuple(center),
                 radius=radius,
                 zone_type=zone_type,
-                penalty_per_second=penalty,
-                min_alt=min_alt,
-                max_alt=max_alt,
                 activation_time=activation,
                 deactivation_time=activation + duration
             )
@@ -217,7 +195,7 @@ class AirDefenseManager:
             {
                 'active_zones': List[str],
                 'warnings': List[str],
-                'violations': Dict[str, Dict[str, float]],
+                'violations': Dict[str, float],
                 'penalty_this_frame': int,
                 'total_penalty': int,
                 'landing_required': List[str]
@@ -273,22 +251,18 @@ class AirDefenseManager:
 
             if violating_zones:
                 if uav_id not in self.violation_time:
-                    self.violation_time[uav_id] = {}
+                    self.violation_time[uav_id] = 0.0
+                self.violation_time[uav_id] += dt
 
-                for zone in violating_zones:
-                    zone_time = self.violation_time[uav_id].get(zone.id, 0.0)
-                    zone_time += dt
-                    self.violation_time[uav_id][zone.id] = zone_time
+                full_seconds = int(self.violation_time[uav_id])
+                prev_seconds = int(self.violation_time[uav_id] - dt)
 
-                    # Ceza hesapla (her tam saniye için)
-                    full_seconds = int(zone_time)
-                    prev_seconds = int(zone_time - dt)
+                if full_seconds > prev_seconds:
+                    penalty = self.PENALTY_PER_SECOND
+                    self.total_penalty += penalty
+                    result['penalty_this_frame'] += penalty
 
-                    if full_seconds > prev_seconds:
-                        penalty = zone.penalty_per_second
-                        self.total_penalty += penalty
-                        result['penalty_this_frame'] += penalty
-
+                    for zone in violating_zones:
                         self.violations_log.append({
                             'time': sim_time,
                             'uav_id': uav_id,
@@ -297,21 +271,14 @@ class AirDefenseManager:
                             'penalty': penalty
                         })
 
-                    if zone_time >= self.MAX_VIOLATION_SEC:
-                        if uav_id not in result['landing_required']:
-                            result['landing_required'].append(uav_id)
-
-                # İhlal olmayan bölgeleri sıfırla
-                active_zone_ids = {zone.id for zone in violating_zones}
-                for zone_id in list(self.violation_time[uav_id].keys()):
-                    if zone_id not in active_zone_ids:
-                        del self.violation_time[uav_id][zone_id]
+                if self.violation_time[uav_id] >= self.MAX_VIOLATION_SEC:
+                    result['landing_required'].append(uav_id)
             else:
                 if uav_id in self.violation_time:
                     del self.violation_time[uav_id]
 
             if uav_id in self.violation_time:
-                result['violations'][uav_id] = self.violation_time[uav_id].copy()
+                result['violations'][uav_id] = self.violation_time[uav_id]
                 
         result['total_penalty'] = self.total_penalty
         
@@ -339,11 +306,6 @@ class AirDefenseManager:
         for zone in self.zones.values():
             if not zone.is_active:
                 continue
-            if zone.min_alt is not None and current_pos[2] < zone.min_alt:
-                continue
-            if zone.max_alt is not None and current_pos[2] > zone.max_alt:
-                continue
-
             dist = zone.distance_to_boundary(current_pos)
             
             if dist < min_dist:
@@ -406,10 +368,6 @@ class AirDefenseManager:
         # Direkt yol üzerinde bölge var mı kontrol et
         def segment_intersects_zone(a: np.ndarray, b: np.ndarray, zone: AirDefenseZone) -> bool:
             if not zone.is_active:
-                return False
-            if zone.min_alt is not None and a[2] < zone.min_alt and b[2] < zone.min_alt:
-                return False
-            if zone.max_alt is not None and a[2] > zone.max_alt and b[2] > zone.max_alt:
                 return False
             center = np.array(zone.center)
             ab = b[:2] - a[:2]
@@ -483,9 +441,6 @@ class AirDefenseManager:
             'center': zone.center,
             'radius': zone.radius,
             'type': zone.zone_type.value,
-            'penalty_per_second': zone.penalty_per_second,
-            'min_alt': zone.min_alt,
-            'max_alt': zone.max_alt,
             'is_active': zone.is_active,
             'activation_time': zone.activation_time,
             'deactivation_time': zone.deactivation_time

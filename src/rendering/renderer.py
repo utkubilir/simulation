@@ -1,6 +1,7 @@
 import moderngl
 import numpy as np
 import os
+import cv2  # Asset loading
 from src.rendering.camera import GLCamera
 
 class GLRenderer:
@@ -31,13 +32,23 @@ class GLRenderer:
         self.camera = GLCamera(fov=60.0, aspect_ratio=width/height)
         
         # --- SHADERS ---
-        # 1. Grid Shader
-        self.prog_grid = self._load_program('grid_vs.glsl', 'grid_fs.glsl')
+        # 1. Skybox Shader
+        self.prog_sky = self._load_program('sky_vs.glsl', 'sky_fs.glsl')
+        
+        # 2. Ground Shader (Textured) (Replaces Grid)
+        self.prog_ground = self._load_program('ground_vs.glsl', 'ground_fs.glsl')
         
         # --- GEOMETRY ---
-        # Grid için Full Screen Quad (NDC coordinates)
-        # Z=1 (far plane), Z=-1 (near plane)
-        grid_quad = np.array([
+        # Full Screen Quad (Reusable for Sky, Ground, Post)
+        # We need UVs for Post, but Sky/Ground just need positions.
+        # Let's verify `ground_vs` uses `in_position` (vec3) and `sky_vs` uses `in_pos` (vec2).
+        # To simplify, let's just make a generic Quad VBO with 2D positions for Sky, 3D for Ground?
+        # Actually Ground VS expects Z=0 in shader or does it? 
+        # Ground VS: "gl_Position = vec4(in_position, 1.0);" and raycasts from -1..1 NDC.
+        # So we can just use a fullscreen quad geometry (2D or 3D).
+        
+        # Generic Quad (NDC -1..1)
+        quad_verts = np.array([
             -1.0, 1.0, 0.0,
             -1.0, -1.0, 0.0,
             1.0, 1.0, 0.0,
@@ -46,8 +57,33 @@ class GLRenderer:
             1.0, -1.0, 0.0,
         ], dtype='f4')
         
-        self.vbo_grid = self.ctx.buffer(grid_quad.tobytes())
-        self.vao_grid = self.ctx.simple_vertex_array(self.prog_grid, self.vbo_grid, 'in_position')
+        self.vbo_common_quad = self.ctx.buffer(quad_verts.tobytes())
+        # Bindings
+        self.vao_sky = self.ctx.simple_vertex_array(self.prog_sky, self.vbo_common_quad, 'in_pos') # Sky takes vec2, implies stride check?
+        # If sky takes vec2 but buffer has vec3, we need to specify format carefully or just use vec3 in Sky VS.
+        # Let's assume I updated Sky VS to take vec3 or just ignore z?
+        # My Sky VS said 'in vec2 in_pos'. Using '3f4' buffer with '2f4' input might stride weirdly in simple_vertex_array.
+        # Safer to make Sky VS take vec3 or create proper VBO.
+        # Let's create a specific Quad for Sky/Ground to be safe.
+        
+        # Ground VS takes 'in_position' (vec3). Quad above matches.
+        self.vao_ground = self.ctx.simple_vertex_array(self.prog_ground, self.vbo_common_quad, 'in_position')
+        
+        # Sky VS takes 'in_pos' (vec2). 
+        # Let's just create a 2D quad buffer for Sky/Post.
+        quad_2d = np.array([
+            -1.0, 1.0,
+            -1.0, -1.0,
+            1.0, 1.0,
+            1.0, 1.0,
+            -1.0, -1.0,
+            1.0, -1.0,
+        ], dtype='f4')
+        self.vbo_quad_2d = self.ctx.buffer(quad_2d.tobytes())
+        self.vao_sky = self.ctx.simple_vertex_array(self.prog_sky, self.vbo_quad_2d, 'in_pos')
+        
+        # --- TEXTURES ---
+        self._load_assets()
         
         
         # 2. Aircraft Shader (Phong) - Reusing box shader logic for now
@@ -104,7 +140,60 @@ class GLRenderer:
         except Exception as e:
             print(f"Shader yükleme hatası ({vs_name}, {fs_name}): {e}")
             raise e
+            raise e
+            
+    def _load_assets(self):
+        """Load Textures"""
+        import pygame
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets')
         
+        # 1. Sky Texture
+        sky_path = os.path.join(assets_dir, 'sky_texture.png')
+        if os.path.exists(sky_path):
+            try:
+                # Load with CV2 to ensure RGB/BGR correctness or Pygame
+                # Pygame loads as Surface. Moderngl needs bytes.
+                # Use CV2 for consistency
+                img = cv2.imread(sky_path)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # GL expects RGB
+                # Flip Y? OpenGL textures usually originate bottom-left.
+                # Images usually top-left.
+                img = cv2.flip(img, 0) 
+                
+                self.tex_sky = self.ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
+                self.tex_sky.filter = (moderngl.LINEAR, moderngl.LINEAR) # Linear interpolation
+                
+                # Bind to Texture Unit 2 (0=Screen, 1=Depth)
+                self.prog_sky['skyTexture'] = 2 
+            except Exception as e:
+                print(f"Failed to load sky texture: {e}")
+                self.tex_sky = None
+        else:
+            print("Sky texture not found.")
+            self.tex_sky = None
+            
+        # 2. Ground Texture
+        ground_path = os.path.join(assets_dir, 'ground_texture.png')
+        if os.path.exists(ground_path):
+            try:
+                img = cv2.imread(ground_path)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                # No flip needed for top-down map if UVs align? 
+                # World X,Y maps to UV.
+                
+                self.tex_ground = self.ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
+                self.tex_ground.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+                self.tex_ground.build_mipmaps()
+                self.tex_ground.repeat_x = True
+                self.tex_ground.repeat_y = True
+                
+                self.prog_ground['groundTexture'] = 3
+            except Exception as e:
+                 print(f"Failed to load ground texture: {e}")
+                 self.tex_ground = None
+        else:
+            self.tex_ground = None
+            
     def update_camera(self, position, rotation):
         """Kamera durumunu güncelle"""
         self.camera.set_transform(position, rotation)
@@ -170,10 +259,37 @@ class GLRenderer:
         self.ctx.clear(0.5, 0.7, 0.9)
         self.ctx.enable(moderngl.DEPTH_TEST)
         
-        # Grid'i her zaman en başta çizelim
-        self.prog_grid['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-        self.prog_grid['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-        self.vao_grid.render()
+        self.ctx.clear(0.5, 0.7, 0.9)
+        self.ctx.enable(moderngl.DEPTH_TEST)
+        
+        # 1. Render Skybox (Background)
+        # Disable Depth Write so Sky is always "behind" everything
+        if self.tex_sky:
+            self.ctx.disable(moderngl.DEPTH_TEST) # Or glDepthMask(False)
+            self.tex_sky.use(location=2)
+            self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            # Skybox needs special projection matrix? Or same?
+            # Standard View matrix has translation. Skybox should center on camera (remove translation).
+            # But my shader does "invView" logic. If viewPos is 0,0,0 it works.
+            # Effectively, SkyVS uses "invView * ...". If 'm_view' has translation, invView calculates world pos.
+            # We want direction. 
+            # Vector (0,0,1) * invView_rot_only -> World Dir.
+            # My SkyVS logic:
+            # vec4 viewPos = invProj * clipPos; viewPos.w = 0;
+            # vec3 worldDir = (invView * viewPos).xyz; 
+            # Since viewPos.w = 0, the translation part of invView is multiplied by 0.
+            # So translation doesn't matter! Correct.
+            
+            self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.vao_sky.render(moderngl.TRIANGLES)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            
+        # 2. Render Ground (Geometry)
+        if self.tex_ground:
+            self.tex_ground.use(location=3)
+            self.prog_ground['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            self.prog_ground['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.vao_ground.render(moderngl.TRIANGLES)
         
     def end_frame(self, time=0.0):
         """Render döngüsünü bitir (Post-Process & Draw to Output FBO)"""
@@ -195,10 +311,14 @@ class GLRenderer:
             self.prog_post['time'].value = time
 
         # DoF Parameters (Sabit veya dinamik)
-        # Focus distance: Kamera önündeki hedef (örn: 20m)
-        self.prog_post['focusDistance'].value = 20.0 
-        self.prog_post['focusRange'].value = 30.0
-        self.prog_post['dofEnabled'].value = True
+        # Focus distance: Sonsuza odakla (Netlik için)
+        self.prog_post['focusDistance'].value = 500.0 
+        self.prog_post['focusRange'].value = 1000.0
+        self.prog_post['dofEnabled'].value = False # Blur kapalı
+        
+        # Vignette azalt
+        if 'vignetteStrength' in self.prog_post:
+            self.prog_post['vignetteStrength'].value = 0.3
         
         # Quad çiz
         self.vao_quad.render(moderngl.TRIANGLE_STRIP)

@@ -129,7 +129,7 @@ class FixedCamera:
         
         # Sensör gürültüsü
         self.sensor_noise_enabled = config.get('sensor_noise', True)  # Varsayılan AÇIK
-        self.iso = config.get('iso', 400)  # ISO değeri (Reduced from 800)
+        self.iso = config.get('iso', 100)  # ISO değeri (Clean, daylight)
         
         # Auto Exposure
         self.auto_exposure_enabled = config.get('auto_exposure', False)
@@ -163,6 +163,11 @@ class FixedCamera:
         self.K = None
         self._update_intrinsics()
         
+        
+        # Load Assets for Realistic Rendering
+        self.sky_texture = None
+        self.ground_texture = None
+
         # İstatistikler
         self.frame_count = 0
         
@@ -999,11 +1004,10 @@ class FixedCamera:
                           camera_pos: np.ndarray,
                           camera_orient: np.ndarray) -> np.ndarray:
         """
-        Zemin dokusu, gökyüzü, bulutlar ve ufuk çizgisi
+        Zemin, gökyüzü ve ufuk çizgisi (Prosedürel)
         """
         h, w = frame.shape[:2]
         pitch = camera_orient[1]
-        roll = camera_orient[0]
         
         # 1. Temel Gradyanlar (Hızlı Render)
         horizon_y = int(h / 2 + np.tan(pitch) * self.focal_length)

@@ -60,8 +60,10 @@ class FrameLogger:
         self.scenario = scenario
         self.config = config
         
-        # Frame storage
-        self._frames: List[FrameData] = []
+        # Metrics tracking (streamed)
+        self._metrics = Metrics()
+        self._prev_t = 0.0
+        self._current_lock = 0.0
         self._frame_file = None
         
         # Write config snapshot
@@ -95,12 +97,50 @@ class FrameLogger:
             
     def log_frame(self, frame: FrameData):
         """Log a single frame"""
-        self._frames.append(frame)
-        
         # Stream write to file
         frame_dict = asdict(frame)
         self._frame_file.write(json.dumps(frame_dict) + "\n")
         self._frame_file.flush()
+
+        # Update metrics incrementally
+        if self._metrics.total_frames == 0:
+            dt = 0.0
+        else:
+            dt = frame.t - self._prev_t
+
+        self._metrics.total_frames += 1
+        self._metrics.duration = frame.t
+
+        lock = frame.lock
+        if lock.get('is_valid') and self._metrics.time_to_first_valid_lock is None:
+            self._metrics.time_to_first_valid_lock = frame.t
+
+        if lock.get('state') == 'success' and self._metrics.time_to_first_success_lock is None:
+            self._metrics.time_to_first_success_lock = frame.t
+
+        if lock.get('is_valid'):
+            self._metrics.valid_lock_time_total += dt
+            self._current_lock += dt
+            self._metrics.longest_continuous_lock = max(
+                self._metrics.longest_continuous_lock, self._current_lock
+            )
+        else:
+            self._current_lock = 0.0
+            reason = lock.get('reason_invalid')
+            if reason:
+                self._metrics.invalid_reason_counts[reason] = (
+                    self._metrics.invalid_reason_counts.get(reason, 0) + 1
+                )
+
+        self._metrics.total_detections += len(frame.detections)
+
+        score = frame.score or {}
+        self._metrics.correct_locks = score.get('correct_locks', 0)
+        self._metrics.incorrect_locks = score.get('incorrect_locks', 0)
+        self._metrics.final_score = score.get('total_score', 0)
+        self._metrics.success_lock_count = self._metrics.correct_locks
+
+        self._prev_t = frame.t
         
     def __enter__(self):
         """Context manager entry"""
@@ -118,8 +158,9 @@ class FrameLogger:
             self._frame_file.close()
             self._frame_file = None
             
-        # Compute metrics
-        metrics = Metrics.from_frames(self._frames)
+        # Finalize metrics
+        metrics = self._metrics
+        metrics.finalize_rates()
         
         # Write metrics.json
         metrics_path = self.output_dir / "metrics.json"
@@ -196,6 +237,17 @@ class Metrics:
         # Detection
         self.total_detections: int = 0
         self.detection_rate: float = 0.0        # per second
+
+    def finalize_rates(self):
+        """Finalize derived rates after aggregation."""
+        if self.duration > 0:
+            self.lock_success_rate = (self.correct_locks / self.duration) * 60
+            self.valid_lock_ratio = self.valid_lock_time_total / self.duration
+            self.detection_rate = self.total_detections / self.duration
+        else:
+            self.lock_success_rate = 0.0
+            self.valid_lock_ratio = 0.0
+            self.detection_rate = 0.0
         
     @classmethod
     def from_frames(cls, frames: List[FrameData]) -> 'Metrics':
@@ -252,7 +304,7 @@ class Metrics:
 
         if m.duration > 0:
             m.valid_lock_ratio = m.valid_lock_time_total / m.duration
-            
+
         # Detection metrics
         m.total_detections = sum(len(f.detections) for f in frames)
         m.detection_rate = m.total_detections / m.duration if m.duration > 0 else 0.0

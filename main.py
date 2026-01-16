@@ -49,7 +49,11 @@ def main():
                 sys.exit(0)
             
             # Helper to load existing scenario config
-            scenario_config = load_scenario(launcher_config['scenario'])
+            try:
+                scenario_config = load_scenario(launcher_config['scenario'])
+            except (FileNotFoundError, ValueError) as exc:
+                print(f"❌ {exc}")
+                sys.exit(1)
             
             config = {
                 **scenario_config,
@@ -70,7 +74,11 @@ def main():
             sys.exit(1)
     else:
         # Load scenario config
-        scenario_config = load_scenario(args.scenario)
+        try:
+            scenario_config = load_scenario(args.scenario)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"❌ {exc}")
+            sys.exit(1)
         
         # Construct base config
         config = {

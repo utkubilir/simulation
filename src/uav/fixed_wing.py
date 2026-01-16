@@ -319,23 +319,10 @@ class FixedWingUAV:
         v_inertial = R_b2i @ self.state.velocity
         self.state.position += v_inertial * dt
         
-        # Oryantasyon (Kinematic Equations for Euler Angles)
-        # ph_dot = p + (q*sin(ph) + r*cos(ph))*tan(th)
-        # th_dot = q*cos(ph) - r*sin(ph)
-        # ps_dot = (q*sin(ph) + r*cos(ph))/cos(th)
-        
-        p, q, r = self.state.angular_velocity
-        sph, cph = np.sin(phi), np.cos(phi)
-        tth, cth = np.tan(theta), np.cos(theta)
-        
-        # Singularity check at theta = +/- 90
-        if abs(cth) < 0.001: cth = 0.001
-        
-        phi_dot = p + (q * sph + r * cph) * tth
-        theta_dot = q * cph - r * sph
-        psi_dot = (q * sph + r * cph) / cth
-        
-        self.state.orientation += np.array([phi_dot, theta_dot, psi_dot]) * dt
+        # Oryantasyon (Quaternion tabanlı entegrasyon)
+        quat = self._euler_to_quaternion(phi, theta, psi)
+        quat = self._integrate_quaternion(quat, self.state.angular_velocity, dt)
+        self.state.orientation = self._quaternion_to_euler(quat)
         
         # 9. Sınırlandırma ve cleanup
         # Wrap yaw
@@ -377,6 +364,59 @@ class FixedWingUAV:
         while angle < -np.pi:
             angle += 2 * np.pi
         return angle
+
+    def _euler_to_quaternion(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
+        """Euler (roll, pitch, yaw) -> quaternion (w, x, y, z)."""
+        cr = np.cos(roll * 0.5)
+        sr = np.sin(roll * 0.5)
+        cp = np.cos(pitch * 0.5)
+        sp = np.sin(pitch * 0.5)
+        cy = np.cos(yaw * 0.5)
+        sy = np.sin(yaw * 0.5)
+        return np.array([
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy
+        ])
+
+    def _quaternion_to_euler(self, quat: np.ndarray) -> np.ndarray:
+        """Quaternion (w, x, y, z) -> Euler (roll, pitch, yaw)."""
+        w, x, y, z = quat
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        sinp = 2.0 * (w * y - z * x)
+        pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+        return np.array([roll, pitch, yaw])
+
+    def _quat_multiply(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        """Quaternion çarpımı (w, x, y, z)."""
+        w1, x1, y1, z1 = q1
+        w2, x2, y2, z2 = q2
+        return np.array([
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        ])
+
+    def _integrate_quaternion(self, quat: np.ndarray, omega: np.ndarray, dt: float) -> np.ndarray:
+        """Quaternionu açısal hızla RK4 entegre et."""
+        omega_quat = np.array([0.0, omega[0], omega[1], omega[2]])
+
+        def q_dot(q):
+            return 0.5 * self._quat_multiply(q, omega_quat)
+
+        k1 = q_dot(quat)
+        k2 = q_dot(quat + 0.5 * dt * k1)
+        k3 = q_dot(quat + 0.5 * dt * k2)
+        k4 = q_dot(quat + dt * k3)
+        quat_next = quat + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return quat_next / np.linalg.norm(quat_next)
 
     def _apply_rate_limit(
         self,

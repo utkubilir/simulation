@@ -1,0 +1,154 @@
+air_defense:
+  enabled: true
+  zones:
+  - activation_time: 180.0
+    center:
+    - 500
+    - 500
+    duration: 90.0
+    id: ad_zone_1
+    radius: 150
+    type: air_defense
+  - activation_time: 300.0
+    center:
+    - 1500
+    - 500
+    duration: 60.0
+    id: ad_zone_2
+    radius: 100
+    type: air_defense
+  - activation_time: 420.0
+    center:
+    - 1000
+    - 1500
+    duration: 45.0
+    id: jamming_zone_1
+    radius: 120
+    type: signal_jamming
+camera:
+  fov: 60
+  height: 480
+  width: 640
+description: "Yar\u0131\u015Fma format\u0131nda tam g\xF6rev sim\xFClasyonu - Sava\u015F\
+  an \u0130HA + Kamikaze g\xF6revi"
+difficulty: hard
+duration: 60.0
+enemies:
+- behavior: random
+  heading: 270
+  id: enemy_1
+  params:
+    random_change_interval: 3.0
+    random_max_turn_rate: 25.0
+  position:
+  - 800
+  - 800
+  - 120
+  speed: 25.0
+- behavior: evasive
+  heading: 180
+  id: enemy_2
+  params:
+    evasive_break_rate: 35.0
+    evasive_burst_duration: 2.0
+  position:
+  - 1200
+  - 600
+  - 100
+  speed: 28.0
+- behavior: zigzag
+  heading: 90
+  id: enemy_3
+  params:
+    zigzag_amplitude: 35.0
+    zigzag_period: 5.0
+  position:
+  - 600
+  - 1200
+  - 110
+  speed: 22.0
+- behavior: constant_turn
+  heading: 225
+  id: enemy_4
+  params:
+    turn_direction: -1
+    turn_rate: 12.0
+  position:
+  - 1500
+  - 1500
+  - 130
+  speed: 24.0
+kamikaze:
+  dive_angle: -60.0
+  min_dive_altitude: 100.0
+  pullup_altitude: 30.0
+  qr_read_timeout: 2.0
+  target_area_margin: 0.3
+lock:
+  margin_h: 0.3
+  margin_v: 0.3
+  min_confidence: 0.5
+  min_size_ratio: 0.05
+  success_duration: 4.0
+  tolerance_seconds: 1.0
+  window_seconds: 5.0
+mode: ui
+name: competition_trial
+notes: "TEKNOFEST 2026 Sava\u015Fan \u0130HA yar\u0131\u015Fmas\u0131 format\u0131\
+  nda tam g\xF6rev sim\xFClasyonu.\nB\xFCy\xFCk \xD6d\xFCl Kriterleri (\u015Eartname):\
+  \ - En az bir m\xFCsabakada otonom kilitlenme - En az bir m\xFCsabakada otonom kamikaze\
+  \ - Otonom kalk\u0131\u015F, u\xE7u\u015F ve ini\u015F\nBu senaryo t\xFCm g\xF6\
+  rev bile\u015Fenlerini test eder.\n"
+player:
+  heading: 45
+  mission:
+    cruise_altitude: 120.0
+    enable_combat: true
+    enable_kamikaze: true
+    enable_landing: true
+    enable_takeoff: true
+    takeoff_altitude: 100.0
+  position:
+  - 200
+  - 200
+  - 0
+  speed: 0.0
+run_id: null
+scenario: competition_trial
+scoring:
+  airdefense_violation_per_sec: -5
+  area_occupation: -150
+  autonomous_landing: 100
+  autonomous_lock: 500
+  autonomous_takeoff: 50
+  boundary_violation: -200
+  ejection_penalty: -75
+  invalid_kamikaze: -30
+  invalid_lock: -30
+  invalid_telemetry_per_sec: -0.2
+  kamikaze_success: 300
+  manual_lock: 50
+  manual_mode_limit_excess: -10
+  realtime_video: 50
+seed: 42
+world:
+  ground_target:
+    enabled: true
+    position:
+    - 1000
+    - 1000
+    - 0
+    qr_content: TEKNOFEST2026_KAMIKAZE
+    qr_size: 2.0
+    wall_angle: 45.0
+    wall_height: 3.0
+  max_altitude: 300
+  min_altitude: 30
+  safe_zone:
+  - 100
+  - 100
+  - 1900
+  - 1900
+  size:
+  - 2000
+  - 2000

@@ -150,7 +150,7 @@ class TestRubricCalculator:
             assert metrics.lock_ratio > 0
         else:
             # If 0, double check sample frames
-            pass
+            assert metrics.lock_ratio == 0
         
     def test_calculate_valid_lock_time(self, sample_frames):
         """Should calculate valid lock time separately."""

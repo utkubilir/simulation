@@ -85,6 +85,33 @@ def run_scenario(scenario: str, seed: int, output_dir: Path) -> Dict:
         }
 
 
+def apply_gate_logic(row: Dict, scenario_conf) -> Dict:
+    """Apply detection/lock gate logic to a metrics row."""
+    exp_det = scenario_conf.expected_detection
+    min_det = scenario_conf.expected_min_detections
+
+    exp_lock = scenario_conf.expected_lock
+    min_valid_lock = scenario_conf.expected_min_valid_locks
+
+    total_det = row.get('total_detections', 0)
+    valid_locks = row.get('valid_lock_count', 0)
+
+    det_pass = (total_det >= min_det) if exp_det else True
+    lock_pass = (valid_locks >= min_valid_lock) if exp_lock else True
+
+    fail_reasons = []
+    if not det_pass:
+        fail_reasons.append("no_detections")
+    if not lock_pass:
+        fail_reasons.append("no_valid_locks")
+
+    row['detection_gate_pass'] = det_pass
+    row['lock_gate_pass'] = lock_pass
+    row['overall_pass'] = det_pass and lock_pass
+    row['fail_reason'] = ",".join(fail_reasons) if fail_reasons else "ok"
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run simulation benchmark")
     parser = argparse.ArgumentParser()
@@ -136,30 +163,7 @@ def main():
                     # Load scenario metadata using the existing loader
                     try:
                         scenario_conf = loader.load(row['scenario'])
-                        
-                        exp_det = scenario_conf.expected_detection
-                        min_det = scenario_conf.expected_min_detections
-                        
-                        exp_lock = scenario_conf.expected_lock
-                        min_valid_lock = scenario_conf.expected_min_valid_locks
-                        
-                        # Check gates
-                        total_det = row.get('total_detections', 0)
-                        valid_locks = row.get('valid_lock_count', 0)
-                        
-                        det_pass = (total_det >= min_det) if exp_det else True
-                        lock_pass = (valid_locks >= min_valid_lock) if exp_lock else True
-                        
-                        fail_reasons = []
-                        if not det_pass:
-                            fail_reasons.append("no_detections")
-                        if not lock_pass:
-                            fail_reasons.append("no_valid_locks")
-                        
-                        row['detection_gate_pass'] = det_pass
-                        row['lock_gate_pass'] = lock_pass
-                        row['overall_pass'] = det_pass and lock_pass
-                        row['fail_reason'] = ",".join(fail_reasons) if fail_reasons else "ok"
+                        apply_gate_logic(row, scenario_conf)
                         
                     except Exception as e:
                         print(f"Warning: Could not check gates for {row['scenario']}: {e}")

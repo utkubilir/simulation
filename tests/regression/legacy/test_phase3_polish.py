@@ -5,6 +5,8 @@ import yaml
 from pathlib import Path
 from src.core.rubric import RubricMetrics, RubricCalculator
 from scripts.generate_report import evaluate_pass_fail
+from scripts.run_all_scenarios import apply_gate_logic
+from src.scenarios import ScenarioLoader
 
 class TestPhase3Polish:
     def test_rubric_has_valid_lock_fields(self):
@@ -83,6 +85,21 @@ class TestPhase3Polish:
                 
     def test_generate_report_gate_logic(self):
         """Test report generator gate logic inference."""
-        pass 
         # Logic actually moved to run_all_scenarios.py.
         # We can test if CSV output contains gate columns.
+        loader = ScenarioLoader()
+        scenario_conf = loader.load("easy_lock")
+        
+        row = {
+            'status': 'success',
+            'total_detections': 0,
+            'valid_lock_count': 0
+        }
+        
+        updated = apply_gate_logic(row, scenario_conf)
+        
+        assert 'detection_gate_pass' in updated
+        assert 'lock_gate_pass' in updated
+        assert 'overall_pass' in updated
+        assert 'fail_reason' in updated
+        assert updated['overall_pass'] is False

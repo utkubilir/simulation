@@ -47,9 +47,8 @@ class GeometryValidator:
         self.size_threshold = size_threshold
         # Auto-clamp warning could go here if we had a logger, but for now we trust construction value
         if abs(self.size_threshold - 0.05) < 1e-6:
-             # Rules say: "Do not use exactly 5.0%". We'll assume the caller handles the warning/clamping
-             # or we can enforce it. Let's enforce a soft minimum if it's exactly 0.05
-             pass
+             # Rules say: "Do not use exactly 5.0%". Enforce a soft minimum.
+             self.size_threshold = 0.051
 
         self.margin_h = margin_h
         self.margin_v = margin_v

@@ -126,9 +126,6 @@ class Test6DOFDynamics:
         uav.state.orientation = np.zeros(3)
         uav.state.position[2] = 100.0
         
-        # Update
-        uav.update(dt)
-        
         # If Lift is insufficient, it should drop (w increases positive or z velocity negative?)
         # Convention: w is Velocity Z (down in Body NED? No, Body frame).
         # Position Z is Altitude (Up).
@@ -161,8 +158,15 @@ class Test6DOFDynamics:
         # In this sim, Position Z is Altitude (Up). So Inertial is ENU-like.
         # So Gravity should be [0, 0, -g].
         # Code says: g_vec = [0, 0, physics.GRAVITY]. (+9.81).
+        initial_altitude = uav.state.position[2]
+        uav.state.velocity = np.zeros(3)
+        uav.state.angular_velocity = np.zeros(3)
+        uav.set_controls(throttle=0.0)
+        uav._current_thrust = 0.0
         
-        pass
+        uav.update(dt)
+        
+        assert uav.state.position[2] < initial_altitude
 
     def test_crash_logic(self, uav):
         """Test crash detection."""

@@ -154,8 +154,33 @@ class SimulationRunner:
             self.autopilot = Autopilot()
         self.autopilot.set_camera_frame_size(self.camera_resolution)
         
-        # Always start in COMBAT mode (otonom kilitlenme)
-        self.autopilot.set_mode(AutopilotMode.COMBAT)
+        # Read autopilot mode from scenario config (default: combat)
+        player_config = config.get('player', config.get('own_uav', {}))
+        autopilot_mode_str = player_config.get('autopilot_mode', 'combat')
+        
+        # Map string to enum
+        mode_map = {
+            'combat': AutopilotMode.COMBAT,
+            'heading_hold': AutopilotMode.HEADING_HOLD,
+            'hdg_hold': AutopilotMode.HEADING_HOLD,
+            'altitude_hold': AutopilotMode.ALTITUDE_HOLD,
+            'alt_hold': AutopilotMode.ALTITUDE_HOLD,
+            'waypoint': AutopilotMode.WAYPOINT,
+            'track': AutopilotMode.TARGET_TRACK,
+            'orbit': AutopilotMode.ORBIT,
+        }
+        autopilot_mode = mode_map.get(autopilot_mode_str, AutopilotMode.COMBAT)
+        
+        # Set initial targets from scenario
+        if autopilot_mode == AutopilotMode.HEADING_HOLD:
+            heading = player_config.get('heading', 0)
+            altitude = player_config.get('position', [0, 0, 100])[2]
+            speed = player_config.get('speed', 25.0)
+            self.autopilot.set_target_heading(heading)
+            self.autopilot.set_target_altitude(altitude)
+            self.autopilot.target_speed = speed
+        
+        self.autopilot.set_mode(autopilot_mode)
         self.autopilot.enable()
             
         # Observer Mode

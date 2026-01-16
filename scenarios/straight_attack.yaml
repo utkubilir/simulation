@@ -16,6 +16,7 @@ player:
   position: [200, 1000, 100]
   heading: 0
   speed: 30.0
+  autopilot_mode: heading_hold  # Fly straight instead of combat tracking
 
 enemies:
   - id: target_1

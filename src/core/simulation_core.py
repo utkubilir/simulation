@@ -183,9 +183,14 @@ class SimulationCore:
         if scenario.camera_fov:
             self.config.camera_fov = scenario.camera_fov
             self.detector.fov = scenario.camera_fov
+            self.camera.set_fov(scenario.camera_fov)
         if scenario.camera_resolution:
             self.config.camera_resolution = scenario.camera_resolution
             # Note: frame_size is passed to validate_lock_candidate() at runtime
+            self.camera.set_resolution(
+                scenario.camera_resolution[0],
+                scenario.camera_resolution[1]
+            )
             self.lock_on.config.frame_width = scenario.camera_resolution[0]
             self.lock_on.config.frame_height = scenario.camera_resolution[1]
             self.autopilot.set_camera_frame_size(scenario.camera_resolution)
@@ -194,6 +199,7 @@ class SimulationCore:
         if scenario.perception_fps:
             self.config.perception_fps = scenario.perception_fps
             self.perception_interval = 1.0 / scenario.perception_fps
+            self.camera.fps = scenario.perception_fps
             
         # Spawn own UAV
         own = scenario.own_uav

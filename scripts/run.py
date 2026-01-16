@@ -176,14 +176,8 @@ class SimulationRunner:
         # We might need to manually set velocity if spawn_uav doesn't take speed.
         # FixedWingUAV.reset takes position and heading, but maybe not speed?
         # Let's check FixedWingUAV later. For now, assume speed needs setting.
-        # Assuming simple physics:
-        heading_rad = np.radians(heading)
-        velocity = np.array([
-            np.cos(heading_rad) * speed,
-            np.sin(heading_rad) * speed,
-            0.0
-        ])
-        player.state.velocity = velocity
+        # FixedWingUAV expects body-frame velocity (u, v, w).
+        player.state.velocity = np.array([speed, 0.0, 0.0])
         
         # 2. Spawn Enemies
         enemies = self.config.get('enemies', [])
@@ -209,14 +203,8 @@ class SimulationRunner:
                     config={'behavior': behavior} # Pass behavior to config
                 )
                 
-                # Set velocity
-                hdg_rad = np.radians(hdg)
-                vel = np.array([
-                    np.cos(hdg_rad) * spd,
-                    np.sin(hdg_rad) * spd,
-                    0.0
-                ])
-                enemy.state.velocity = vel
+                # FixedWingUAV expects body-frame velocity (u, v, w).
+                enemy.state.velocity = np.array([spd, 0.0, 0.0])
                 
                 # Store extra behavior params if needed (FixedWingUAV might need update to handle 'behavior')
                 enemy.behavior = behavior
@@ -389,101 +377,104 @@ class SimulationRunner:
             if self.mode == 'ui':
                 # Map keyboard inputs in UI mode
                 inputs = self.keyboard.get_inputs() if self.keyboard else {}
-                
+
             if self.use_autopilot:
                 controls = self.autopilot.update(player.to_dict(), dt)
                 if controls:
-                    player.set_controls(**controls)
+                    player.set_controls(**controls, dt=dt)
             elif self.mode == 'ui':
                 # Manual control only in UI mode
                 controls = self.controller.update(dt, inputs) if self.controller else {}
-                player.set_controls(**controls)
-                    
-            # World update
-            self.world.update(dt)
-            
-            # Determine view target (Player or Observer target)
-            view_uav = player
-            if self.camera_target_id:
-                target = self.world.get_uav(self.camera_target_id)
-                if target and not target.is_crashed:
-                    view_uav = target
-            
-            # Vision pipeline (from viewpoint of view_uav)
-            enemy_states = self.world.get_uav_states_for_detection(exclude_id=view_uav.id)
-            
-            # Update camera
-            if self.camera:
-                self.camera.update(dt, view_uav.state.velocity)
-                camera_pos, camera_orient = self.camera.get_camera_pose(
-                    view_uav.get_position(),
-                    view_uav.get_orientation()
-                )
-            else:
-                # Headless
-                camera_pos = view_uav.get_camera_position()
-                camera_orient = view_uav.get_orientation()
-                
-            self.detector.set_world_state(
-                uavs=enemy_states,
-                camera_pos=camera_pos,
-                camera_orient=camera_orient
+                player.set_controls(**controls, dt=dt)
+
+        # World update (advance even if player has crashed)
+        self.world.update(dt)
+
+        if not player or player.is_crashed:
+            return
+
+        # Determine view target (Player or Observer target)
+        view_uav = player
+        if self.camera_target_id:
+            target = self.world.get_uav(self.camera_target_id)
+            if target and not target.is_crashed:
+                view_uav = target
+
+        # Vision pipeline (from viewpoint of view_uav)
+        enemy_states = self.world.get_uav_states_for_detection(exclude_id=view_uav.id)
+
+        # Update camera
+        if self.camera:
+            self.camera.update(dt, view_uav.state.velocity)
+            camera_pos, camera_orient = self.camera.get_camera_pose(
+                view_uav.get_position(),
+                view_uav.get_orientation()
             )
-            
-            # Generate synthetic camera frame
-            if self.camera and self.mode == 'ui':
-                frame = self.camera.generate_synthetic_frame(
-                    enemy_states, camera_pos, camera_orient, player.state.velocity
-                )
-            else:
-                # Headless mod için minimal frame
-                frame = np.zeros((self.camera_resolution[1], self.camera_resolution[0], 3), dtype=np.uint8)
-            
-            # Detect and track
-            detections = self.detector.detect(frame)
-            tracks = self.tracker.update(detections)
-            
-            # Update lock state machine
-            lock_status = self.lock_sm.update(tracks, self.sim_time, dt)
-            
-            # Air Defense Update (Şartname 6.3)
-            ad_result = self.air_defense.update(
-                self.sim_time,
-                {'player': player.get_position()},
-                dt
+        else:
+            # Headless
+            camera_pos = view_uav.get_camera_position()
+            camera_orient = view_uav.get_orientation()
+
+        self.detector.set_world_state(
+            uavs=enemy_states,
+            camera_pos=camera_pos,
+            camera_orient=camera_orient
+        )
+
+        # Generate synthetic camera frame
+        if self.camera and self.mode == 'ui':
+            frame = self.camera.generate_synthetic_frame(
+                enemy_states, camera_pos, camera_orient, player.state.velocity
             )
-            
-            # Handle air defense warnings
-            for warning in ad_result.get('warnings', []):
-                print(warning)
-                
-            # Check if landing is required (30s limit exceeded)
-            if ad_result.get('landing_required'):
-                print("⚠️ 30 saniye sınırı aşıldı - İNİŞ GEREKLİ!")
-                if self.autopilot:
-                    self.autopilot.set_mode(AutopilotMode.RETURN_HOME)
-                    
-            # Provide avoidance heading to autopilot if in danger
-            if ad_result.get('active_zones') and self.autopilot:
-                avoidance_heading = self.air_defense.get_avoidance_heading(
-                    player.get_position(),
-                    np.degrees(player.state.heading)
-                )
-                if avoidance_heading is not None:
-                    self.autopilot.set_avoidance_heading(avoidance_heading)
-            
-            # Pass tracks to autopilot
+        else:
+            # Headless mod için minimal frame
+            frame = np.zeros((self.camera_resolution[1], self.camera_resolution[0], 3), dtype=np.uint8)
+
+        # Detect and track
+        detections = self.detector.detect(frame)
+        tracks = self.tracker.update(detections)
+
+        # Update lock state machine
+        lock_status = self.lock_sm.update(tracks, self.sim_time, dt)
+
+        # Air Defense Update (Şartname 6.3)
+        ad_result = self.air_defense.update(
+            self.sim_time,
+            {'player': player.get_position()},
+            dt
+        )
+
+        # Handle air defense warnings
+        for warning in ad_result.get('warnings', []):
+            print(warning)
+
+        # Check if landing is required (30s limit exceeded)
+        if ad_result.get('landing_required'):
+            print("⚠️ 30 saniye sınırı aşıldı - İNİŞ GEREKLİ!")
             if self.autopilot:
-                self.autopilot.set_combat_detections(tracks)
-            
-            # Store for rendering
-            self._last_frame = frame
-            self._last_detections = detections
-            self._last_tracks = tracks
-            self._last_ad_result = ad_result
-            
-            # Log frame
-            self._log_frame(player, enemy_states, detections, tracks, lock_status)
+                self.autopilot.set_mode(AutopilotMode.RETURN_HOME)
+
+        # Provide avoidance heading to autopilot if in danger
+        if ad_result.get('active_zones') and self.autopilot:
+            avoidance_heading = self.air_defense.get_avoidance_heading(
+                player.get_position(),
+                np.degrees(player.state.heading)
+            )
+            if avoidance_heading is not None:
+                self.autopilot.set_avoidance_heading(avoidance_heading)
+
+        # Pass tracks to autopilot
+        if self.autopilot:
+            self.autopilot.set_combat_detections(tracks)
+
+        # Store for rendering
+        self._last_frame = frame
+        self._last_detections = detections
+        self._last_tracks = tracks
+        self._last_ad_result = ad_result
+
+        # Log frame
+        self._log_frame(player, enemy_states, detections, tracks, lock_status)
             
     def _log_frame(self, player, enemies, detections, tracks, lock_status):
         """Log frame data"""

@@ -1,0 +1,39 @@
+# Straight Attack Scenario
+# Player flies straight towards a stationary enemy
+# Expected: Easy lock
+
+name: straight_attack
+difficulty: easy
+expected_detection: true
+expected_success_locks_min: 1
+duration: 45.0
+
+world:
+  size: [2000, 2000]
+  safe_zone: [200, 200, 1800, 1800]
+
+player:
+  position: [200, 1000, 100]
+  heading: 0
+  speed: 30.0
+
+enemies:
+  - id: target_1
+    behavior: stationary
+    position: [1800, 1000, 100]
+    heading: 180
+    speed: 0.0
+
+camera:
+  width: 640
+  height: 480
+  fov: 60
+
+lock:
+  success_duration: 3.0
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+
+notes: >
+  The player starts at [200, 1000] and flies straight (heading 0) towards the stationary enemy at [1800, 1000].

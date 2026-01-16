@@ -290,7 +290,7 @@ class Renderer3D(ShowBase):
                         'throttle': th
                     }
                     
-                player.set_controls(**controls)
+                player.set_controls(**controls, dt=dt)
             
             # Fizik
             self.sim_world.update(dt)

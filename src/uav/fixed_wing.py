@@ -92,6 +92,7 @@ class FixedWingUAV:
         self.Cma = -0.6      # Pitch stability (per rad)
         self.Cmq = -10.0     # Pitch damping (per rad/s)
         self.Cm_de = -0.8    # Elevator control power (per rad)
+        self.stall_drag_factor = config.get('stall_drag_factor', 0.12)
         
         # Lateral (Side force, Roll, Yaw)
         self.CYb = -0.3      # Side force stability
@@ -106,11 +107,22 @@ class FixedWingUAV:
         self.state = UAVState()
         self.controls = ControlInputs()
         
+        # Kontrol yüzeyi hız limitleri (birim/saniye)
+        self.aileron_rate = config.get('aileron_rate', 3.0)
+        self.elevator_rate = config.get('elevator_rate', 3.0)
+        self.rudder_rate = config.get('rudder_rate', 3.0)
+        self.throttle_rate = config.get('throttle_rate', 1.5)
+        
         # Simülasyon değişkenleri
         self.is_crashed = False
         self.is_stalled = False
         self._current_thrust = 0.0
         self._total_time = 0.0
+        
+        # Yer etkileşimi parametreleri
+        self.ground_restitution = config.get('ground_restitution', 0.2)
+        self.ground_friction = config.get('ground_friction', 0.6)
+        self.crash_vertical_speed = config.get('crash_vertical_speed', 12.0)
         
     def reset(self, position: np.ndarray = None, heading: float = 0.0):
         """İHA'yı başlangıç durumuna sıfırla"""
@@ -131,16 +143,29 @@ class FixedWingUAV:
         self.controls.throttle = 0.6
         
     def set_controls(self, aileron: float = None, elevator: float = None, 
-                     rudder: float = None, throttle: float = None):
+                     rudder: float = None, throttle: float = None,
+                     dt: Optional[float] = None):
         """Kontrol girdilerini ayarla"""
         if aileron is not None:
-            self.controls.aileron = np.clip(aileron, -1, 1)
+            target = np.clip(aileron, -1, 1)
+            self.controls.aileron = self._apply_rate_limit(
+                self.controls.aileron, target, self.aileron_rate, dt
+            )
         if elevator is not None:
-            self.controls.elevator = np.clip(elevator, -1, 1)
+            target = np.clip(elevator, -1, 1)
+            self.controls.elevator = self._apply_rate_limit(
+                self.controls.elevator, target, self.elevator_rate, dt
+            )
         if rudder is not None:
-            self.controls.rudder = np.clip(rudder, -1, 1)
+            target = np.clip(rudder, -1, 1)
+            self.controls.rudder = self._apply_rate_limit(
+                self.controls.rudder, target, self.rudder_rate, dt
+            )
         if throttle is not None:
-            self.controls.throttle = np.clip(throttle, 0, 1)
+            target = np.clip(throttle, 0, 1)
+            self.controls.throttle = self._apply_rate_limit(
+                self.controls.throttle, target, self.throttle_rate, dt
+            )
             
     def update(self, dt: float):
         """
@@ -177,7 +202,7 @@ class FixedWingUAV:
         # u, v, w = v_air_body
         u, v, w = v_air_body
         alpha = np.arctan2(w, u)
-        beta = np.arcsin(v / airspeed)
+        beta = np.arcsin(np.clip(v / airspeed, -1.0, 1.0))
         
         self.is_stalled = (airspeed < self.min_speed) or (abs(np.degrees(alpha)) > 15.0)
         
@@ -199,6 +224,8 @@ class FixedWingUAV:
             
         # Drag Coefficient
         CD = self.CD0 + self.CD_induced_k * CL**2
+        if self.is_stalled:
+            CD += self.stall_drag_factor
         
         # Side Force Coefficient
         CY = self.CYb * beta + self.Cn_dr * dr
@@ -318,9 +345,16 @@ class FixedWingUAV:
         # Yere çarpma
         if self.state.position[2] < 0:
             self.state.position[2] = 0
-            self.state.velocity = np.zeros(3)
-            self.state.angular_velocity = np.zeros(3)
-            self.is_crashed = True
+            v_inertial = R_b2i @ self.state.velocity
+            if abs(v_inertial[2]) > self.crash_vertical_speed:
+                self.state.velocity = np.zeros(3)
+                self.state.angular_velocity = np.zeros(3)
+                self.is_crashed = True
+            else:
+                v_inertial[2] = -v_inertial[2] * self.ground_restitution
+                v_inertial[0] *= max(0.0, 1.0 - self.ground_friction)
+                v_inertial[1] *= max(0.0, 1.0 - self.ground_friction)
+                self.state.velocity = R_i2b @ v_inertial
             
     def _rotation_matrix(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
         """Euler açılarından dönüşüm matrisi oluştur (Body -> Inertial)"""
@@ -343,6 +377,19 @@ class FixedWingUAV:
         while angle < -np.pi:
             angle += 2 * np.pi
         return angle
+
+    def _apply_rate_limit(
+        self,
+        current: float,
+        target: float,
+        rate: float,
+        dt: Optional[float]
+    ) -> float:
+        """Kontrol değerine hız limiti uygula."""
+        if dt is None:
+            return target
+        max_delta = rate * dt
+        return current + np.clip(target - current, -max_delta, max_delta)
         
     # --- Getters & Helpers ---
     # Not: Bazı getter'lar artık doğrudan _state_ değişkenlerinden alınabilir,

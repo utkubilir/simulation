@@ -176,6 +176,23 @@ class FixedCamera:
         # İstatistikler
         self.frame_count = 0
         
+        # Precomputed noise pool for performance optimization
+        # (avoids per-frame np.random.normal which is expensive)
+        self._noise_pool_size = 16  # Number of precomputed noise frames
+        self._noise_pool = None
+        self._noise_pool_index = 0
+        self._init_noise_pool()
+    
+    def _init_noise_pool(self):
+        """Precompute noise textures for faster sensor noise application."""
+        w, h = self.resolution
+        noise_level = np.sqrt(self.iso / 100.0) * 8.0
+        
+        # Generate pool of noise frames
+        self._noise_pool = np.random.normal(
+            0, noise_level, (self._noise_pool_size, h, w, 3)
+        ).astype(np.float32)
+        
     def _update_intrinsics(self):
         """Kamera içsel matrisini güncelle"""
         w, h = self.resolution
@@ -1435,26 +1452,26 @@ class FixedCamera:
         
     def _apply_sensor_noise(self, frame: np.ndarray) -> np.ndarray:
         """
-        Kamera sensör gürültüsü simülasyonu (Temporal destekli)
+        Kamera sensör gürültüsü simülasyonu (Optimized with precomputed pool)
         
-        ISO değerine göre Gaussian gürültü ekler.
-        Temporal korelasyon ile gürültü zamanla yumuşak değişir.
+        Uses precomputed noise textures and cyclic indexing for performance.
+        Temporal smoothing reduces flicker.
         """
-        # ISO'ya göre gürültü seviyesi (100=düşük, 6400=yüksek)
-        # Increased multiplier for more visible grain
-        noise_level = np.sqrt(self.iso / 100.0) * 8.0
+        # Check if noise pool needs reinitialization (resolution change)
+        if self._noise_pool is None or self._noise_pool.shape[1:3] != frame.shape[:2]:
+            self._init_noise_pool()
         
-        # Yeni gürültü örneği
-        current_noise = np.random.normal(0, noise_level, frame.shape).astype(np.float32)
+        # Get noise from precomputed pool (cyclic)
+        current_noise = self._noise_pool[self._noise_pool_index]
+        self._noise_pool_index = (self._noise_pool_index + 1) % self._noise_pool_size
         
-        # Temporal smoothing (varsa önceki gürültü ile karıştır)
+        # Temporal smoothing (20% old, 80% new to reduce flicker)
         if hasattr(self, '_prev_noise') and self._prev_noise is not None and self._prev_noise.shape == frame.shape:
-             # %20 eski, %80 yeni (flicker azaltır)
             self._prev_noise = 0.2 * self._prev_noise + 0.8 * current_noise
         else:
-            self._prev_noise = current_noise
+            self._prev_noise = current_noise.copy()
             
-        # Uygula
+        # Apply noise
         noisy = frame.astype(np.float32) + self._prev_noise
         result = np.clip(noisy, 0, 255).astype(np.uint8)
         

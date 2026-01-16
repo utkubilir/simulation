@@ -1,0 +1,453 @@
+"""
+Hava Savunma Sistemi Yöneticisi
+
+Şartname 6.3'e uygun hava savunma ve sinyal karıştırma bölgeleri.
+
+Kurallar:
+- Aktifleşmeden 1 dakika önce uyarı
+- -5 puan/saniye ceza (kırmızı alanda)
+- 30 saniye limit → iniş uyarısı
+- Koordinatlar sunucudan veya senaryo dosyasından
+"""
+
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Optional
+from enum import Enum
+
+
+class ZoneType(Enum):
+    """Bölge tipi"""
+    AIR_DEFENSE = "air_defense"
+    SIGNAL_JAMMING = "signal_jamming"
+
+
+@dataclass
+class AirDefenseZone:
+    """
+    Hava Savunma Bölgesi
+    
+    Şartname 6.3:
+    - Sanal daireler
+    - Dikey eksende sonsuz yükseklik
+    - Fiziksel müdahale yok (sadece ceza)
+    """
+    id: str
+    center: Tuple[float, float]          # (x, y) merkez
+    radius: float                         # Yarıçap (metre)
+    zone_type: ZoneType = ZoneType.AIR_DEFENSE
+    
+    # Zamanlama
+    activation_time: float = 0.0         # Aktifleşme zamanı (saniye)
+    deactivation_time: float = float('inf')  # Deaktivasyon zamanı
+    
+    # Durum
+    is_active: bool = False
+    warning_sent: bool = False
+    
+    def contains(self, position: np.ndarray) -> bool:
+        """
+        Pozisyon bölge içinde mi?
+        
+        Not: Dikey eksende sonsuz yükseklik
+        """
+        if not self.is_active:
+            return False
+            
+        dx = position[0] - self.center[0]
+        dy = position[1] - self.center[1]
+        
+        return (dx**2 + dy**2) <= self.radius**2
+        
+    def distance_to_boundary(self, position: np.ndarray) -> float:
+        """
+        Sınıra mesafe
+        
+        Returns:
+            Negatif = içeride, Pozitif = dışarıda
+        """
+        dx = position[0] - self.center[0]
+        dy = position[1] - self.center[1]
+        
+        return np.sqrt(dx**2 + dy**2) - self.radius
+
+
+class AirDefenseManager:
+    """
+    Şartname 6.3 uyumlu hava savunma yönetimi
+    
+    Features:
+    - Dinamik bölge aktivasyonu
+    - 1 dakika önceden uyarı
+    - İhlal takibi ve ceza hesaplama
+    - 30 saniye limit kontrolü
+    - Kaçınma heading önerisi
+    
+    Usage:
+        manager = AirDefenseManager()
+        manager.load_from_scenario(scenario)
+        result = manager.update(sim_time, uav_positions, dt)
+    """
+    
+    # Şartname sabitleri
+    WARNING_ADVANCE_SEC = 60.0        # 1 dakika önceden uyarı
+    PENALTY_PER_SECOND = -5           # -5 puan/saniye
+    MAX_VIOLATION_SEC = 30.0          # 30 saniye limit
+    SAFE_DISTANCE = 50.0              # Güvenli mesafe (kaçınma için)
+    
+    def __init__(self):
+        # Bölgeler
+        self.zones: Dict[str, AirDefenseZone] = {}
+        
+        # Her UAV için ihlal takibi
+        self.violation_time: Dict[str, float] = {}
+        self.total_penalty: int = 0
+        
+        # Uyarılar ve loglar
+        self.warnings_log: List[Tuple[float, str]] = []
+        self.violations_log: List[Dict] = []
+        
+    def add_zone(self, zone: AirDefenseZone):
+        """Bölge ekle"""
+        self.zones[zone.id] = zone
+        
+    def remove_zone(self, zone_id: str):
+        """Bölge kaldır"""
+        if zone_id in self.zones:
+            del self.zones[zone_id]
+            
+    def load_from_scenario(self, scenario: dict):
+        """
+        Senaryo dosyasından bölgeleri yükle
+        
+        Beklenen format:
+        air_defense:
+          enabled: true
+          zones:
+            - id: zone_1
+              center: [500, 500]
+              radius: 100
+              activation_time: 180
+              duration: 90
+              type: air_defense
+        """
+        ad_config = scenario.get('air_defense', {})
+        
+        if not ad_config.get('enabled', False):
+            print("ℹ️ Air defense disabled in scenario")
+            return
+            
+        zones = ad_config.get('zones', [])
+        
+        for zone_data in zones:
+            zone_type = ZoneType.AIR_DEFENSE
+            if zone_data.get('type') == 'signal_jamming':
+                zone_type = ZoneType.SIGNAL_JAMMING
+                
+            activation = zone_data.get('activation_time', 0)
+            duration = zone_data.get('duration', float('inf'))
+            
+            zone = AirDefenseZone(
+                id=zone_data['id'],
+                center=tuple(zone_data['center']),
+                radius=zone_data['radius'],
+                zone_type=zone_type,
+                activation_time=activation,
+                deactivation_time=activation + duration
+            )
+            
+            self.add_zone(zone)
+            
+        print(f"✅ Loaded {len(zones)} air defense zones")
+        
+    def update(self, 
+               sim_time: float,
+               uav_positions: Dict[str, np.ndarray],
+               dt: float) -> Dict:
+        """
+        Her frame güncelle
+        
+        Args:
+            sim_time: Simülasyon zamanı (saniye)
+            uav_positions: {uav_id: [x, y, z]} pozisyonları
+            dt: Zaman adımı
+            
+        Returns:
+            {
+                'active_zones': List[str],
+                'warnings': List[str],
+                'violations': Dict[str, float],
+                'penalty_this_frame': int,
+                'total_penalty': int,
+                'landing_required': List[str]
+            }
+        """
+        result = {
+            'active_zones': [],
+            'warnings': [],
+            'violations': {},
+            'penalty_this_frame': 0,
+            'total_penalty': self.total_penalty,
+            'landing_required': []
+        }
+        
+        # 1. Bölge durumlarını güncelle
+        for zone_id, zone in self.zones.items():
+            # Aktivasyon kontrolü
+            if not zone.is_active:
+                if sim_time >= zone.activation_time:
+                    zone.is_active = True
+                    msg = f"🔴 {zone_id} ({zone.zone_type.value}) AKTİF!"
+                    result['warnings'].append(msg)
+                    self.warnings_log.append((sim_time, msg))
+                    
+            # Deaktivasyon kontrolü
+            if zone.is_active:
+                if sim_time >= zone.deactivation_time:
+                    zone.is_active = False
+                    msg = f"🟢 {zone_id} deaktif edildi"
+                    result['warnings'].append(msg)
+                    self.warnings_log.append((sim_time, msg))
+                    
+            # 1 dakika önceden uyarı
+            if not zone.warning_sent:
+                time_until = zone.activation_time - sim_time
+                if 0 < time_until <= self.WARNING_ADVANCE_SEC:
+                    zone.warning_sent = True
+                    msg = f"⚠️ {zone_id} {int(time_until)} saniye sonra aktif olacak!"
+                    result['warnings'].append(msg)
+                    self.warnings_log.append((sim_time, msg))
+                    
+            if zone.is_active:
+                result['active_zones'].append(zone_id)
+                
+        # 2. İhlal kontrolü
+        for uav_id, position in uav_positions.items():
+            violation_this_frame = False
+            violating_zone = None
+            
+            for zone in self.zones.values():
+                if zone.contains(position):
+                    violation_this_frame = True
+                    violating_zone = zone
+                    break
+                    
+            if violation_this_frame:
+                # Süre ekle
+                if uav_id not in self.violation_time:
+                    self.violation_time[uav_id] = 0
+                self.violation_time[uav_id] += dt
+                
+                # Ceza hesapla (her tam saniye için)
+                full_seconds = int(self.violation_time[uav_id])
+                prev_seconds = int(self.violation_time[uav_id] - dt)
+                
+                if full_seconds > prev_seconds:
+                    penalty = self.PENALTY_PER_SECOND
+                    self.total_penalty += penalty
+                    result['penalty_this_frame'] = penalty
+                    
+                    # Log
+                    self.violations_log.append({
+                        'time': sim_time,
+                        'uav_id': uav_id,
+                        'zone_id': violating_zone.id,
+                        'penalty': penalty
+                    })
+                    
+                # 30 saniye kontrolü
+                if self.violation_time[uav_id] >= self.MAX_VIOLATION_SEC:
+                    result['landing_required'].append(uav_id)
+                    
+            if uav_id in self.violation_time:
+                result['violations'][uav_id] = self.violation_time[uav_id]
+                
+        result['total_penalty'] = self.total_penalty
+        
+        return result
+        
+    def get_avoidance_heading(self,
+                               current_pos: np.ndarray,
+                               current_heading: float,
+                               velocity: np.ndarray = None) -> Optional[float]:
+        """
+        Kaçınma heading'i hesapla
+        
+        Args:
+            current_pos: Mevcut pozisyon
+            current_heading: Mevcut heading (derece)
+            velocity: Hız vektörü
+            
+        Returns:
+            Önerilen heading (derece) veya None
+        """
+        # En yakın tehlikeli bölgeyi bul
+        min_dist = float('inf')
+        closest_zone = None
+        
+        for zone in self.zones.values():
+            if not zone.is_active:
+                continue
+                
+            dist = zone.distance_to_boundary(current_pos)
+            
+            if dist < min_dist:
+                min_dist = dist
+                closest_zone = zone
+                
+        # Tehlike yok
+        if closest_zone is None or min_dist > self.SAFE_DISTANCE:
+            return None
+            
+        # Bölge merkezinden kaçış yönü
+        dx = current_pos[0] - closest_zone.center[0]
+        dy = current_pos[1] - closest_zone.center[1]
+        
+        # Radyal yön (merkezden uzaklaşma)
+        radial_heading = np.degrees(np.arctan2(dy, dx))
+        
+        # Teğet yönler
+        tangent_cw = (radial_heading + 90) % 360
+        tangent_ccw = (radial_heading - 90) % 360
+        
+        # Mevcut heading'e en yakın teğet yönü seç
+        diff_cw = abs((tangent_cw - current_heading + 180) % 360 - 180)
+        diff_ccw = abs((tangent_ccw - current_heading + 180) % 360 - 180)
+        
+        if diff_cw < diff_ccw:
+            avoidance_heading = tangent_cw
+        else:
+            avoidance_heading = tangent_ccw
+            
+        # İçerideyse direkt dışarı çık
+        if min_dist < 0:
+            avoidance_heading = radial_heading
+            
+        return avoidance_heading % 360
+        
+    def get_safe_corridor(self,
+                          start: np.ndarray,
+                          goal: np.ndarray) -> List[np.ndarray]:
+        """
+        Güvenli waypoint rotası oluştur
+        
+        Args:
+            start: Başlangıç pozisyonu
+            goal: Hedef pozisyonu
+            
+        Returns:
+            Waypoint listesi
+        """
+        # Basit implementasyon: 
+        # Aktif bölgelerin etrafından geç
+        
+        waypoints = [start.copy()]
+        current = start.copy()
+        
+        # Direkt yol üzerinde bölge var mı kontrol et
+        direction = goal[:2] - start[:2]
+        distance = np.linalg.norm(direction)
+        
+        if distance < 1:
+            waypoints.append(goal.copy())
+            return waypoints
+            
+        direction = direction / distance
+        
+        # Yol boyunca kontrol
+        check_points = 20
+        blocked_zones = []
+        
+        for i in range(check_points):
+            t = i / check_points
+            check_pos = start[:2] + direction * distance * t
+            
+            for zone in self.zones.values():
+                if not zone.is_active:
+                    continue
+                    
+                dx = check_pos[0] - zone.center[0]
+                dy = check_pos[1] - zone.center[1]
+                
+                if (dx**2 + dy**2) < (zone.radius + self.SAFE_DISTANCE)**2:
+                    if zone not in blocked_zones:
+                        blocked_zones.append(zone)
+                        
+        # Bölgelerin etrafından geç
+        for zone in blocked_zones:
+            # Bölgenin teğet noktasını bul
+            to_zone = np.array(zone.center) - current[:2]
+            dist_to_zone = np.linalg.norm(to_zone)
+            
+            if dist_to_zone < 1:
+                continue
+                
+            # Teğet nokta (bölge yarıçapı + güvenli mesafe)
+            bypass_radius = zone.radius + self.SAFE_DISTANCE * 2
+            
+            # Sağdan mı soldan mı geç?
+            cross = direction[0] * to_zone[1] - direction[1] * to_zone[0]
+            
+            if cross > 0:  # Soldan geç
+                angle = np.arctan2(to_zone[1], to_zone[0]) - np.pi/2
+            else:  # Sağdan geç
+                angle = np.arctan2(to_zone[1], to_zone[0]) + np.pi/2
+                
+            bypass_point = np.array([
+                zone.center[0] + bypass_radius * np.cos(angle),
+                zone.center[1] + bypass_radius * np.sin(angle),
+                current[2]  # Aynı irtifa
+            ])
+            
+            waypoints.append(bypass_point)
+            current = bypass_point
+            
+        waypoints.append(goal.copy())
+        
+        return waypoints
+        
+    def get_zone_info(self, zone_id: str) -> Optional[Dict]:
+        """Bölge bilgisi getir"""
+        if zone_id not in self.zones:
+            return None
+            
+        zone = self.zones[zone_id]
+        
+        return {
+            'id': zone_id,
+            'center': zone.center,
+            'radius': zone.radius,
+            'type': zone.zone_type.value,
+            'is_active': zone.is_active,
+            'activation_time': zone.activation_time,
+            'deactivation_time': zone.deactivation_time
+        }
+        
+    def get_all_zones(self) -> List[Dict]:
+        """Tüm bölgeleri getir"""
+        return [self.get_zone_info(zid) for zid in self.zones]
+        
+    def get_violation_stats(self) -> Dict:
+        """İhlal istatistikleri"""
+        return {
+            'total_penalty': self.total_penalty,
+            'violation_times': self.violation_time.copy(),
+            'violation_count': len(self.violations_log),
+            'warnings_count': len(self.warnings_log)
+        }
+        
+    def reset(self):
+        """Durumu sıfırla"""
+        self.violation_time.clear()
+        self.total_penalty = 0
+        self.warnings_log.clear()
+        self.violations_log.clear()
+        
+        for zone in self.zones.values():
+            zone.is_active = False
+            zone.warning_sent = False
+            
+    def clear(self):
+        """Tüm bölgeleri temizle"""
+        self.zones.clear()
+        self.reset()

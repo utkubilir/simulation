@@ -1,0 +1,32 @@
+name: constant_turn
+description: Target in constant turn, testing continuous tracking
+duration: 20.0
+difficulty: medium
+expected_detection: true
+expected_lock: false
+tags:
+- tracking
+- maneuver
+- circular
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 45
+targets:
+- id: target_01
+  position:
+  - 650
+  - 650
+  - 100
+  heading: 0
+  team: red
+  behavior: constant_turn
+  behavior_params:
+    turn_rate: 20.0
+    turn_direction: 1
+    base_speed: 25.0
+expected_min_detections: 1
+expected_min_valid_locks: 0
+notes: Phase 3 Polish

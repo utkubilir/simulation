@@ -1,0 +1,158 @@
+# TEKNOFEST 2026 Savaşan İHA - Yarışma Simülasyonu
+# Şartname uyumlu tam görev senaryosu
+
+name: competition_trial
+difficulty: hard
+description: "Yarışma formatında tam görev simülasyonu - Savaşan İHA + Kamikaze görevi"
+
+# Simülasyon süresi (15 dakika müsabaka)
+duration: 900.0
+
+# Deterministik simülasyon için seed
+seed: 2026
+
+world:
+  size: [2000, 2000]
+  safe_zone: [100, 100, 1900, 1900]
+  min_altitude: 30    # Minimum güvenli irtifa
+  max_altitude: 300   # Maksimum irtifa
+  
+  # Yer hedefi (Kamikaze görevi)
+  ground_target:
+    enabled: true
+    position: [1000, 1000, 0]  # Merkez
+    qr_content: "TEKNOFEST2026_KAMIKAZE"
+    qr_size: 2.0       # 2m x 2m (şartname)
+    wall_height: 3.0   # Plaka yüksekliği (şartname)
+    wall_angle: 45.0   # Plaka açısı (şartname)
+
+# Oyuncu İHA (Kalkış noktası)
+player:
+  position: [200, 200, 0]  # Yerde başla (kalkış için)
+  heading: 45
+  speed: 0.0               # Durağan başlangıç
+  
+  # Görev konfigürasyonu
+  mission:
+    enable_takeoff: true
+    enable_combat: true
+    enable_kamikaze: true
+    enable_landing: true
+    takeoff_altitude: 100.0
+    cruise_altitude: 120.0
+
+# Rakip İHA'lar
+enemies:
+  - id: enemy_1
+    behavior: random
+    position: [800, 800, 120]
+    heading: 270
+    speed: 25.0
+    params:
+      random_change_interval: 3.0
+      random_max_turn_rate: 25.0
+    
+  - id: enemy_2
+    behavior: evasive
+    position: [1200, 600, 100]
+    heading: 180
+    speed: 28.0
+    params:
+      evasive_burst_duration: 2.0
+      evasive_break_rate: 35.0
+    
+  - id: enemy_3
+    behavior: zigzag
+    position: [600, 1200, 110]
+    heading: 90
+    speed: 22.0
+    params:
+      zigzag_period: 5.0
+      zigzag_amplitude: 35.0
+      
+  - id: enemy_4
+    behavior: constant_turn
+    position: [1500, 1500, 130]
+    heading: 225
+    speed: 24.0
+    params:
+      turn_rate: 12.0
+      turn_direction: -1
+
+# Kamera konfigürasyonu
+camera:
+  width: 640
+  height: 480
+  fov: 60
+
+# Kilitlenme parametreleri (Şartname 6.1.1)
+lock:
+  success_duration: 4.0    # 4 saniye kesintisiz
+  tolerance_seconds: 1.0   # 1 saniye tolerans
+  window_seconds: 5.0      # Geriye doğru bakış penceresi
+  margin_h: 0.3            # Hedef vuruş alanı %30
+  margin_v: 0.3
+  min_size_ratio: 0.05     # Ekranın min %5'ini kaplamalı
+  min_confidence: 0.5
+
+# Kamikaze parametreleri (Şartname 6.2)
+kamikaze:
+  min_dive_altitude: 100.0  # Minimum başlangıç irtifası
+  dive_angle: -60.0         # Dalış açısı
+  pullup_altitude: 30.0     # Toparlanma başlangıç
+  qr_read_timeout: 2.0      # QR okuma penceresi
+  target_area_margin: 0.3   # Hedef alanı %30
+
+# Puanlama (Şartname 7.2.2)
+scoring:
+  autonomous_lock: 500
+  manual_lock: 50
+  kamikaze_success: 300
+  autonomous_takeoff: 50
+  autonomous_landing: 100
+  realtime_video: 50
+  
+  # Cezalar
+  invalid_telemetry_per_sec: -0.2
+  invalid_lock: -30
+  invalid_kamikaze: -30
+  manual_mode_limit_excess: -10
+  airdefense_violation_per_sec: -5
+  area_occupation: -150
+  boundary_violation: -200
+  ejection_penalty: -75
+
+# Hava savunma sistemi (Şartname 6.3)
+air_defense:
+  enabled: true
+  zones:
+    - id: ad_zone_1
+      center: [500, 500]
+      radius: 150
+      type: air_defense
+      activation_time: 180.0      # 3 dakikada aktif
+      duration: 90.0              # 90 saniye aktif kalır
+      
+    - id: ad_zone_2
+      center: [1500, 500]
+      radius: 100
+      type: air_defense
+      activation_time: 300.0      # 5 dakikada aktif
+      duration: 60.0
+      
+    - id: jamming_zone_1
+      center: [1000, 1500]
+      radius: 120
+      type: signal_jamming
+      activation_time: 420.0      # 7 dakikada aktif
+      duration: 45.0
+
+notes: >
+  TEKNOFEST 2026 Savaşan İHA yarışması formatında tam görev simülasyonu.
+  
+  Büyük Ödül Kriterleri (Şartname):
+  - En az bir müsabakada otonom kilitlenme
+  - En az bir müsabakada otonom kamikaze
+  - Otonom kalkış, uçuş ve iniş
+  
+  Bu senaryo tüm görev bileşenlerini test eder.

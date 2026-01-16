@@ -1,0 +1,52 @@
+# Multi-Target Scenario - 3 Enemies
+# Expected: At least 1 successful lock
+
+name: multi_target_3
+difficulty: medium
+expected_detection: true
+expected_success_locks_min: 1
+duration: 60.0
+
+world:
+  size: [2000, 2000]
+  safe_zone: [200, 200, 1800, 1800]
+
+player:
+  position: [1000, 1000, 100]
+  heading: 0
+  speed: 25.0
+
+enemies:
+  - id: target_1
+    behavior: orbit
+    position: [1200, 800, 100]
+    heading: 90
+    speed: 20.0
+    orbit_radius: 150
+    
+  - id: target_2
+    behavior: straight
+    position: [800, 1200, 120]
+    heading: 270
+    speed: 22.0
+    
+  - id: target_3
+    behavior: zigzag
+    position: [1400, 1000, 80]
+    heading: 180
+    speed: 18.0
+
+camera:
+  width: 640
+  height: 480
+  fov: 60
+
+lock:
+  success_duration: 4.0
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+
+notes: >
+  Multiple targets with different behaviors.
+  Tests target prioritization and tracker stability.

@@ -1,0 +1,49 @@
+name: multi_target_3
+description: Three targets in view testing lock selection
+duration: 10.0
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 0
+targets:
+- id: target_01
+  position:
+  - 600
+  - 480
+  - 100
+  heading: 180
+  team: red
+  behavior: straight
+  behavior_params:
+    base_speed: 15.0
+- id: target_02
+  position:
+  - 600
+  - 500
+  - 100
+  heading: 180
+  team: red
+  behavior: straight
+  behavior_params:
+    base_speed: 20.0
+- id: target_03
+  position:
+  - 600
+  - 520
+  - 100
+  heading: 180
+  team: red
+  behavior: straight
+  behavior_params:
+    base_speed: 18.0
+lock_on:
+  min_duration: 1.0
+difficulty: medium
+expected_detection: true
+expected_lock: true
+expected_min_detections: 1
+expected_min_valid_locks: 1
+tags: []
+notes: Phase 3 Polish

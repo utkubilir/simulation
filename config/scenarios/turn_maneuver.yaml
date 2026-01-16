@@ -1,0 +1,34 @@
+name: turn_maneuver
+description: Target executing turn maneuver during tracking
+duration: 12.0
+difficulty: medium
+expected_detection: true
+expected_lock: true
+tags:
+- maneuver
+- turn
+- tracking
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 0
+targets:
+- id: target_01
+  position:
+  - 600
+  - 500
+  - 100
+  heading: 180
+  team: red
+  behavior: constant_turn
+  behavior_params:
+    base_speed: 20.0
+    turn_rate: 15.0
+    turn_direction: 1
+lock_on:
+  min_duration: 1.0
+expected_min_detections: 1
+expected_min_valid_locks: 1
+notes: Phase 3 Polish

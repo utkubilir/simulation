@@ -1,0 +1,32 @@
+name: zigzag
+description: Target in zigzag pattern, testing adaptive tracking
+duration: 15.0
+difficulty: medium
+expected_detection: true
+expected_lock: true
+tags:
+- tracking
+- zigzag
+- oscillating
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 45
+targets:
+- id: target_01
+  position:
+  - 650
+  - 650
+  - 100
+  heading: 225
+  team: red
+  behavior: zigzag
+  behavior_params:
+    zigzag_period: 3.0
+    zigzag_amplitude: 25.0
+    base_speed: 25.0
+expected_min_detections: 1
+expected_min_valid_locks: 1
+notes: Phase 3 Polish

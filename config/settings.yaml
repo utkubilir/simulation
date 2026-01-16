@@ -1,0 +1,134 @@
+# Teknofest Savaşan İHA Simülasyon Ayarları
+
+simulation:
+  # Simülasyon parametreleri
+  fps: 60                    # Hedef FPS
+  physics_hz: 100            # Fizik güncelleme hızı
+  time_scale: 1.0            # Zaman ölçeği (1.0 = gerçek zamanlı)
+  
+  # Dünya ayarları
+  world_size: [2000, 2000, 500]  # x, y, z (metre)
+  ground_level: 0
+  
+  # Görselleştirme
+  window_width: 1280
+  window_height: 720
+  fullscreen: false
+
+uav:
+  # Varsayılan İHA parametreleri
+  default_type: "fixed_wing"
+  
+  fixed_wing:
+    mass: 5.0                # kg
+    wingspan: 2.0            # metre
+    min_speed: 15.0          # m/s (stall hızı)
+    max_speed: 40.0          # m/s
+    max_roll_rate: 60.0      # derece/saniye
+    max_pitch_rate: 30.0     # derece/saniye
+    max_yaw_rate: 20.0       # derece/saniye
+
+autopilot:
+  # PID kazançları
+  altitude_pid:
+    kp: 0.5
+    ki: 0.1
+    kd: 0.2
+  heading_pid:
+    kp: 1.0
+    ki: 0.0
+    kd: 0.3
+  speed_pid:
+    kp: 0.3
+    ki: 0.05
+    kd: 0.1
+  # Genel ayarlar
+  default_speed: 25.0        # m/s
+  waypoint_radius: 20.0      # metre - waypoint'e ulaşma mesafesi
+  orbit_default_radius: 100.0 # metre
+
+camera:
+  # Temel parametreler
+  fov: 60.0                    # Görüş açısı (derece)
+  resolution: [640, 480]       # Piksel
+  fps: 30
+  
+  # Sabit montaj (Gimbal YOK - kamera İHA'ya sabit)
+  mount_offset: [0.3, 0.0, -0.1]  # İHA'ya göre [ileri, sağ, aşağı] metre
+  mount_pitch: -5.0              # Aşağı bakış açısı (derece)
+  
+  # Lens distorsiyon
+  distortion_enabled: true
+  k1: -0.1                     # Radyal distorsiyon (barrel < 0)
+  k2: 0.02
+  
+  # Kamera sarsıntısı (İHA titreşimi simülasyonu)
+  shake_enabled: true
+  shake_intensity: 0.005       # radyan
+  
+  # Motion blur
+  motion_blur: false
+  exposure_time: 0.01          # saniye
+  blur_strength: 5             # Maksimum blur kernel boyutu
+  
+  # Chromatic aberration (renk sapması)
+  chromatic_aberration: false
+  chromatic_strength: 2.0      # Piksel cinsinden maksimum sapma
+  
+  # Lens flare (güneş yansıması)
+  lens_flare: false
+  sun_direction: [0.5, 0.3, 0.8]  # Normalize güneş yönü
+  
+  # Görsel efektler
+  vignette_enabled: true
+  haze_enabled: true
+  haze_distance: 300.0         # metre
+  
+  # Depth of Field (derinlik bulanıklığı)
+  dof_enabled: false
+  focus_distance: 100.0        # metre - odak mesafesi
+  dof_strength: 1.0            # bulanıklık şiddeti
+  
+  # Sensör gürültüsü
+  sensor_noise: false
+  iso: 100                     # ISO değeri (100-6400)
+  
+  # Auto Exposure
+  auto_exposure: false
+  target_brightness: 128       # hedef ortalama parlaklık (0-255)
+
+detection:
+  # YOLO tespit ayarları
+  model_path: null           # Harici model (null = varsayılan)
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  classes: ["uav"]
+  input_size: [640, 640]
+
+tracking:
+  # Hedef takip ayarları
+  enabled: true
+  method: "kcf"              # kcf, csrt, deepsort
+  max_age: 30                # Kaybolma için maks frame
+  min_hits: 3                # Onay için min tespit
+
+lock_on:
+  # Kilitlenme ayarları
+  min_duration: 1.0          # Minimum kilitlenme süresi (saniye)
+  margin_horizontal: 0.5     # Hedef genişliğinin yüzdesi
+  margin_vertical: 0.5       # Hedef yüksekliğinin yüzdesi
+  
+  # Lock-on UI
+  crosshair_color: [0, 255, 0]      # Yeşil
+  lock_color: [255, 0, 0]           # Kırmızı
+  crosshair_size: 50
+
+competition:
+  # Yarışma simülasyonu ayarları
+  server_enabled: true
+  server_port: 5000
+  team_id: "team_001"
+  
+  # Puanlama
+  correct_lock_points: 100
+  incorrect_lock_penalty: -50

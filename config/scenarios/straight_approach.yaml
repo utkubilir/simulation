@@ -1,0 +1,30 @@
+name: straight_approach
+description: Target approaching head-on, testing lock acquisition
+duration: 15.0
+difficulty: easy
+expected_detection: true
+expected_lock: true
+tags:
+- baseline
+- head-on
+- lock-test
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 90
+targets:
+- id: target_01
+  position:
+  - 500
+  - 800
+  - 100
+  heading: 270
+  team: red
+  behavior: straight
+  behavior_params:
+    base_speed: 25.0
+expected_min_detections: 1
+expected_min_valid_locks: 1
+notes: Phase 3 Polish

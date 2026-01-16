@@ -1,0 +1,33 @@
+name: evasive
+description: Target with evasive maneuvers, testing lock recovery
+duration: 25.0
+difficulty: hard
+expected_detection: true
+expected_lock: true
+tags:
+- evasive
+- maneuver
+- lock-recovery
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 45
+targets:
+- id: target_01
+  position:
+  - 700
+  - 700
+  - 100
+  heading: 225
+  team: red
+  behavior: evasive
+  behavior_params:
+    evasive_burst_duration: 2.0
+    evasive_break_duration: 1.5
+    evasive_break_rate: 35.0
+    base_speed: 28.0
+expected_min_detections: 1
+expected_min_valid_locks: 1
+notes: Phase 3 Polish

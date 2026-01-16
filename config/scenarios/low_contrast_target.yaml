@@ -1,0 +1,35 @@
+name: low_contrast_target
+description: Low contrast target with reduced detection confidence
+duration: 10.0
+difficulty: hard
+expected_detection: true
+expected_lock: true
+tags:
+- low-contrast
+- detection
+- stress-test
+own_uav:
+  position:
+  - 500
+  - 500
+  - 100
+  heading: 0
+targets:
+- id: target_01
+  position:
+  - 650
+  - 500
+  - 100
+  heading: 180
+  team: red
+  behavior: straight
+  behavior_params:
+    base_speed: 15.0
+noise:
+  conf_sigma: 0.15
+  p_fn: 0.1
+lock_on:
+  min_duration: 1.0
+expected_min_detections: 1
+expected_min_valid_locks: 1
+notes: Phase 3 Polish

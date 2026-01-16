@@ -1,0 +1,48 @@
+camera:
+  fov: 60
+  height: 480
+  width: 640
+difficulty: hard
+duration: 60.0
+enemies:
+- behavior: evasive
+  evasive_turn_rate: 45
+  heading: 225
+  id: target_1
+  position:
+  - 800
+  - 800
+  - 100
+  speed: 28.0
+expected_detection: true
+expected_success_locks_min: 0
+lock:
+  margin_h: 0.5
+  margin_v: 0.5
+  min_confidence: 0.5
+  success_duration: 4.0
+mode: ui
+name: evasive
+notes: 'Target actively evades when being tracked. Tests pursuit logic and lock maintenance
+  under maneuvers.
+
+  '
+player:
+  heading: 45
+  position:
+  - 500
+  - 500
+  - 100
+  speed: 30.0
+run_id: null
+scenario: evasive
+seed: 42
+world:
+  safe_zone:
+  - 200
+  - 200
+  - 1800
+  - 1800
+  size:
+  - 2000
+  - 2000

@@ -1,9 +1,0 @@
-camera:
-  height: 100
-  width: 100
-detection: {}
-lock: {}
-simulation:
-  window_height: 100
-  window_width: 100
-tracking: {}

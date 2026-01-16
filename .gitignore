@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# PyCharm / IDEs
+.idea/
+.vscode/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Testing / Quality
+.pytest_cache/
+htmlcov/
+.coverage
+.tox/
+.nox/
+
+# Project Specific Output
+results/
+*.jpg
+*.png
+*.mp4
+
+# Models
+*.pt
+*.pth

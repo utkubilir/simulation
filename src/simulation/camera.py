@@ -31,7 +31,7 @@ try:
     from src.rendering.renderer import GLRenderer
     OPENGL_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: OpenGL Renderer could not be imported: {e}")
+    print(f"Info: OpenGL Renderer not available ({e}). Using CPU rendering.")
     OPENGL_AVAILABLE = False
 
 
@@ -120,7 +120,7 @@ class FixedCamera:
         # Görsel efektler
         self.vignette_enabled = config.get('vignette_enabled', True)
         self.haze_enabled = config.get('haze_enabled', True)
-        self.haze_distance = config.get('haze_distance', 300.0)  # metre
+        self.haze_distance = config.get('haze_distance', 500.0)  # metre (Increased from 250 for clarity)
         
         # Depth of Field (odak bulanıklığı)
         self.dof_enabled = config.get('dof_enabled', False)
@@ -129,7 +129,7 @@ class FixedCamera:
         
         # Sensör gürültüsü
         self.sensor_noise_enabled = config.get('sensor_noise', True)  # Varsayılan AÇIK
-        self.iso = config.get('iso', 200)  # ISO değeri (100-6400)
+        self.iso = config.get('iso', 400)  # ISO değeri (Reduced from 800)
         
         # Auto Exposure
         self.auto_exposure_enabled = config.get('auto_exposure', False)
@@ -137,7 +137,17 @@ class FixedCamera:
         self._current_exposure = 1.0  # Dinamik exposure faktörü
         
         # Tonemapping (HDR)
-        self.tonemapping_enabled = config.get('tonemapping_enabled', False)
+        self.tonemapping_enabled = config.get('tonemapping_enabled', True)
+        
+        # Color Grading (New)
+        self.color_grading_enabled = config.get('color_grading_enabled', True)
+        # BGR Scale factors: (Blue gain, Green gain, Red gain)
+        # Subtler tint (was [1.05, 1.1, 0.9])
+        self.color_grading_values = config.get('color_grading_values', [1.02, 1.05, 0.95]) 
+        
+        # Lens Softness (New - remove "CG sharp" look)
+        self.softness_enabled = config.get('softness_enabled', True)
+        self.softness_strength = config.get('softness_strength', 0.2)  # Reduced from 0.5
         
         # Atmosferik efektler (Yağmur/Kar)
         self.rain_enabled = config.get('rain_enabled', False)
@@ -792,6 +802,12 @@ class FixedCamera:
         if self.tonemapping_enabled:
             frame = self._apply_tonemapping(frame)
             
+        if self.color_grading_enabled:
+            frame = self._apply_color_grading(frame)
+            
+        if self.softness_enabled:
+            frame = self._apply_lens_softness(frame)
+            
         return frame
 
     def _get_uav_mesh(self, size: float) -> Tuple[np.ndarray, List[List[int]]]:
@@ -1415,7 +1431,8 @@ class FixedCamera:
         Temporal korelasyon ile gürültü zamanla yumuşak değişir.
         """
         # ISO'ya göre gürültü seviyesi (100=düşük, 6400=yüksek)
-        noise_level = np.sqrt(self.iso / 100.0) * 5.0
+        # Increased multiplier for more visible grain
+        noise_level = np.sqrt(self.iso / 100.0) * 8.0
         
         # Yeni gürültü örneği
         current_noise = np.random.normal(0, noise_level, frame.shape).astype(np.float32)
@@ -1482,6 +1499,42 @@ class FixedCamera:
         # Scale back to 0-255
         result = np.clip(mapped * 255, 0, 255).astype(np.uint8)
         return result
+
+    def _apply_color_grading(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Renk düzenleme (Color Grading)
+        
+        Görüntüye belirli bir renk tonu verir. BGR kanallarını ölçekler.
+        """
+        b, g, r = self.color_grading_values
+        
+        # NumPy broadcasting ile çarpma
+        # Frame shape (H, W, 3), values (3) -> matches last dim
+        graded = frame.astype(np.float32) * np.array([b, g, r])
+        
+        return np.clip(graded, 0, 255).astype(np.uint8)
+
+    def _apply_lens_softness(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Lens yumuşaklığı (Soft focus / Blur)
+        
+        Keskin CG görüntülerini yumuşatarak daha gerçekçi yapar.
+        """
+        if self.softness_strength <= 0:
+            return frame
+            
+        # Hafif Gaussian Blur
+        # Sigma değeri strength ile orantılı
+        sigma = self.softness_strength * 0.8
+        
+        # Kernel size (tek sayı olmalı)
+        ksize = int(sigma * 3)
+        if ksize % 2 == 0: ksize += 1
+        ksize = max(3, ksize)
+        
+        blurred = cv2.GaussianBlur(frame, (ksize, ksize), sigma)
+        
+        return blurred
 
     def _apply_rain_snow(self, frame: np.ndarray, 
                          type: str = 'rain', 
@@ -1575,6 +1628,8 @@ class FixedCamera:
             'dof_strength': self.dof_strength,
             'sensor_noise_enabled': self.sensor_noise_enabled,
             'iso': self.iso,
+            'color_grading_enabled': self.color_grading_enabled,
+            'softness_enabled': self.softness_enabled,
             'auto_exposure_enabled': self.auto_exposure_enabled,
             'target_brightness': self.target_brightness
         }

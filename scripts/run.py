@@ -273,15 +273,18 @@ class SimulationRunner:
             
     def _run_ui(self):
         """Run in UI mode"""
-        self.renderer.init()
-        dt = 1.0 / 60.0
-        
         print(f"\n{'='*50}")
         print(f"🎮 TEKNOFEST Savaşan İHA Sim vNext")
         print(f"{'='*50}")
         print(f"  Scenario: {self.scenario} | Seed: {self.seed}")
         print(f"  P: Toggle Autopilot | ESC: Exit")
         print(f"{'='*50}\n")
+        
+        print("⏳ Initializing Graphics Engine...")
+        self.renderer.init()
+        print("✅ Graphics Initialized. Starting loop...")
+        
+        dt = 1.0 / 60.0
         
         try:
             while self.running:
@@ -293,6 +296,10 @@ class SimulationRunner:
                 
         except KeyboardInterrupt:
             pass
+        except Exception as e:
+            import traceback
+            print(f"\n❌ Simulation Crashed: {e}")
+            traceback.print_exc()
         finally:
             self.renderer.close()
             

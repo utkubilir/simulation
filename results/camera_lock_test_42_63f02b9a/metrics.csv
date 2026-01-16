@@ -1,0 +1,2 @@
+duration,total_frames,correct_locks,incorrect_locks,final_score,success_lock_count,time_to_first_valid_lock,time_to_first_success_lock,valid_lock_time_total,valid_lock_ratio,longest_continuous_lock,total_detections,detection_rate
+1.1166666666666676,68,0,0,0,0,0.0,,1.1166666666666676,1.0,1.1166666666666676,68,60.89552238805965

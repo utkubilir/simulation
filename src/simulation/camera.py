@@ -74,6 +74,10 @@ class FixedCamera:
                 print(f"Failed to initialize OpenGL Renderer (Maybe no context?): {e}")
                 self.renderer = None
         
+        # Environment referansı (terrain + world objects)
+        self._environment = None
+        self._environment_initialized = False
+        
         # Sabit montaj pozisyonu (İHA gövdesine göre)
         # [ileri, sağ, aşağı] metre cinsinden
         mount_offset = config.get('mount_offset', [0.3, 0.0, -0.1])
@@ -297,6 +301,24 @@ class FixedCamera:
         if norm < 1e-10:  # Near-zero threshold instead of exact zero
             return np.array([1.0, 0.0, 0.0])  # Default forward direction
         return vec / norm
+    
+    def set_environment(self, environment):
+        """
+        Kamera için environment referansını ayarla.
+        OpenGL renderer varsa GPU kaynaklarını hazırlar.
+        
+        Args:
+            environment: Environment objesi (terrain + world objects)
+        """
+        self._environment = environment
+        
+        # OpenGL Renderer varsa environment'ı initialize et
+        if self.renderer and not self._environment_initialized:
+            try:
+                self.renderer.init_environment(environment)
+                self._environment_initialized = True
+            except Exception as e:
+                print(f"Failed to initialize environment in renderer: {e}")
         
     def update(self, dt: float, uav_velocity: np.ndarray = None):
         """
@@ -705,11 +727,12 @@ class FixedCamera:
                     )
             
             # --- MAIN PASS ---
-            # 1. Sahne Başlat
-            self.renderer.begin_frame() # Sets Main FBO
-            
-            # 2. Kamera Güncelle
+            # 1. Kamera Güncelle (environment rendering için önce yapılmalı)
             self.renderer.update_camera(position=camera_pos, rotation=camera_orient)
+            
+            # 2. Sahne Başlat (environment + sky rendering)
+            self.renderer.begin_frame()
+            
             
             # 3. İHA'ları Çiz
             for uav in uav_states:

@@ -69,11 +69,11 @@ void main() {
     
     // Fog
     float dist = length(viewPos - v_fragPos);
-    float fogDensity = 0.04;
+    float fogDensity = 0.002;  // Reduced for aerial view (was 0.04)
     float fogFactor = 1.0 - exp(-dist * fogDensity);
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    fogFactor = clamp(fogFactor, 0.0, 0.7);  // Max 70% fog
     
-    vec3 fogColor = vec3(0.5, 0.7, 0.9);
+    vec3 fogColor = vec3(0.4, 0.5, 0.7);  // Slightly darker fog
     result = mix(result, fogColor, fogFactor);
     
     f_color = vec4(result, 1.0);

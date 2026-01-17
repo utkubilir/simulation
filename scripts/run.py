@@ -266,6 +266,10 @@ class SimulationRunner:
         self.running = True
         self.setup_scenario()
         
+        # Environment'ı kameraya aktar (terrain, binalar vb. render için)
+        if self.camera and hasattr(self.world, 'environment'):
+            self.camera.set_environment(self.world.environment)
+        
         if self.mode == 'ui':
             self._run_ui()
         else:

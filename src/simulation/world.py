@@ -30,6 +30,21 @@ class SimulationWorld:
         self.dt = 1.0 / self.physics_hz
         self.time_scale = config.get('time_scale', 1.0)
         
+        # Environment (Terrain + World Objects)
+        from src.simulation.environment import Environment
+        env_config = config.get('environment', {
+            'terrain': {
+                'type': 'flat',  # 'flat', 'hills', 'valley'
+                'size': self.world_size[:2],
+                'max_height': 30.0
+            },
+            'auto_spawn': True,
+            'num_buildings': 5,
+            'num_trees': 15,
+            'seed': config.get('seed', 42)
+        })
+        self.environment = Environment(env_config)
+        
         # İHA'lar
         self.uavs: Dict[str, FixedWingUAV] = {}
         self.player_uav_id: str = None

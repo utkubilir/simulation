@@ -486,6 +486,169 @@ class GLRenderer:
         self.vbo_instance.write(instance_data.tobytes())
         self.vao_aircraft_instanced.render(moderngl.TRIANGLES, instances=count)
 
+    # --- ENVIRONMENT RENDERING ---
+    
+    def init_environment(self, environment):
+        """
+        Environment için GPU kaynaklarını hazırla.
+        
+        Args:
+            environment: Environment objesi (terrain + objects)
+        """
+        from src.rendering.geometry import GeometryGenerator
+        
+        # Terrain mesh oluştur
+        terrain = environment.terrain
+        terrain_mesh = GeometryGenerator.create_terrain_mesh(
+            terrain.heightmap,
+            tuple(terrain.size),
+            resolution=64  # Performance için düşük
+        )
+        
+        self.vbo_terrain = self.ctx.buffer(terrain_mesh.tobytes())
+        self.vao_terrain = self.ctx.simple_vertex_array(
+            self.prog_aircraft,  # box shader'ı tekrar kullan
+            self.vbo_terrain, 
+            'in_position', 'in_normal'
+        )
+        self.terrain_vertex_count = len(terrain_mesh) // 6  # 6 float per vertex
+        
+        # World objects için mesh'leri hazırla
+        self._init_object_meshes()
+        
+        # Environment referansını sakla
+        self.environment = environment
+        
+    def _init_object_meshes(self):
+        """Object mesh'lerini oluştur (building, tree)"""
+        from src.rendering.geometry import GeometryGenerator
+        
+        # Building mesh
+        building_mesh = GeometryGenerator.create_building_mesh(1.0, 1.0, 1.0)  # Unit size, scale at render
+        self.vbo_building = self.ctx.buffer(building_mesh.tobytes())
+        self.vao_building = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_building, 
+            'in_position', 'in_normal'
+        )
+        
+        # Tree mesh
+        tree_mesh = GeometryGenerator.create_tree_mesh(1.0, 0.5)  # Unit size
+        self.vbo_tree = self.ctx.buffer(tree_mesh.tobytes())
+        self.vao_tree = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_tree,
+            'in_position', 'in_normal'
+        )
+    
+    def render_terrain(self, terrain_color=(0.15, 0.25, 0.1)):
+        """
+        Terrain mesh'i render et.
+        
+        Args:
+            terrain_color: Terrain rengi (r, g, b)
+        """
+        if not hasattr(self, 'vao_terrain'):
+            return
+        
+        import pyrr
+        
+        # NED → OpenGL koordinat dönüşümü 
+        # GLCamera.SIM_TO_GL ile aynı - terrain mesh NED'de oluşturuldu
+        # Sim: X=Forward, Y=Right, Z=Down  → GL: X=Right, Y=Up, Z=-Forward
+        # Terrain mesh: X=position(0-2000), Y=height(0), Z=position(0-2000)
+        # Bu aslında NED değil, XYZ world coords. Terrain'i dönüştürmeliyiz.
+        sim_to_gl = np.array([
+            [0, 1, 0, 0],   # GL.X = Sim.Y (mesh X -> GL X) 
+            [0, 0, -1, 0],  # GL.Y = -Sim.Z 
+            [-1, 0, 0, 0],  # GL.Z = -Sim.X
+            [0, 0, 0, 1]
+        ], dtype='f4')
+        
+        # Terrain mesh uses: X=world_x, Y=height, Z=world_z (already OpenGL-like)
+        # But the world coords need to match NED world where camera is
+        # Actually terrain is drawn in "raw" coords while camera views in transformed coords
+        # Apply inverse transform: GL -> Sim so terrain appears in camera's view
+        # Or just apply same transform so both are in same space
+        model = sim_to_gl
+        
+        self.prog_aircraft['m_model'].write(model.tobytes())
+        self.prog_aircraft['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+        self.prog_aircraft['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+        self.prog_aircraft['u_color'].value = terrain_color
+        
+        if 'viewPos' in self.prog_aircraft:
+            self.prog_aircraft['viewPos'].value = tuple(self.camera.position)
+        if 'lightSpaceMatrix' in self.prog_aircraft and hasattr(self, 'light_space_matrix'):
+            self.prog_aircraft['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
+        
+        self.vao_terrain.render()
+    
+    def render_world_objects(self, objects):
+        """
+        World object'lerini render et.
+        
+        Args:
+            objects: WorldObject listesi
+        """
+        if not hasattr(self, 'vao_building'):
+            return
+            
+        import pyrr
+        
+        # NED → GL transform (same as terrain)
+        sim_to_gl = np.array([
+            [0, 1, 0, 0],
+            [0, 0, -1, 0],
+            [-1, 0, 0, 0],
+            [0, 0, 0, 1]
+        ], dtype='f4')
+        
+        for obj in objects:
+            # Object tipine göre VAO seç
+            if obj.obj_type == 'building':
+                vao = self.vao_building
+            elif obj.obj_type == 'tree':
+                vao = self.vao_tree
+            else:
+                continue  # Bilinmeyen tip
+            
+            # Model matrix oluştur (scale + rotate + translate + coord transform)
+            scale_mat = pyrr.matrix44.create_from_scale(
+                [obj.size[0], obj.size[1], obj.size[2]], dtype='f4'
+            )
+            rot_mat = pyrr.matrix44.create_from_y_rotation(obj.rotation, dtype='f4')
+            trans_mat = pyrr.matrix44.create_from_translation(obj.position, dtype='f4')
+            
+            model = pyrr.matrix44.multiply(scale_mat, rot_mat)
+            model = pyrr.matrix44.multiply(model, trans_mat)
+            model = pyrr.matrix44.multiply(model, sim_to_gl)  # Apply coord transform
+            
+            # Shader uniforms
+            self.prog_aircraft['m_model'].write(model.tobytes())
+            self.prog_aircraft['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            self.prog_aircraft['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.prog_aircraft['u_color'].value = obj.color
+            
+            if 'viewPos' in self.prog_aircraft:
+                self.prog_aircraft['viewPos'].value = tuple(self.camera.position)
+            if 'lightSpaceMatrix' in self.prog_aircraft and hasattr(self, 'light_space_matrix'):
+                self.prog_aircraft['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
+            
+            vao.render()
+    
+    def render_environment(self):
+        """
+        Tüm environment'ı render et (terrain + objects).
+        init_environment() çağrıldıktan sonra kullanılır.
+        """
+        if not hasattr(self, 'environment'):
+            return
+        
+        # Terrain
+        self.render_terrain()
+        
+        # World objects
+        self.render_world_objects(self.environment.get_all_objects())
+
     def begin_shadow_pass(self):
         """Start Shadow Map Rendering Pass"""
         self.fbo_shadow.use()
@@ -510,41 +673,32 @@ class GLRenderer:
         
         # 1. Main Pass
         self.fbo.use()
-        self.ctx.clear(0.5, 0.7, 0.9)
+        self.ctx.clear(0.4, 0.6, 0.8)  # Açık mavi gökyüzü arka planı
         self.ctx.enable(moderngl.DEPTH_TEST)
         
         # Bind Shadow Map
         self.tex_shadow.use(location=5)
         self.prog_aircraft['shadowMap'] = 5
         
-        # 1. Render Skybox (Background)
-        # Disable Depth Write so Sky is always "behind" everything
-        if self.tex_sky:
-            self.ctx.disable(moderngl.DEPTH_TEST) # Or glDepthMask(False)
-            self.tex_sky.use(location=2)
-            self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-            # Skybox needs special projection matrix? Or same?
-            # Standard View matrix has translation. Skybox should center on camera (remove translation).
-            # But my shader does "invView" logic. If viewPos is 0,0,0 it works.
-            # Effectively, SkyVS uses "invView * ...". If 'm_view' has translation, invView calculates world pos.
-            # We want direction. 
-            # Vector (0,0,1) * invView_rot_only -> World Dir.
-            # My SkyVS logic:
-            # vec4 viewPos = invProj * clipPos; viewPos.w = 0;
-            # vec3 worldDir = (invView * viewPos).xyz; 
-            # Since viewPos.w = 0, the translation part of invView is multiplied by 0.
-            # So translation doesn't matter! Correct.
-            
-            self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-            self.vao_sky.render(moderngl.TRIANGLES)
-            self.ctx.enable(moderngl.DEPTH_TEST)
-            
-        # 2. Render Ground (Geometry)
-        if self.tex_ground:
-            self.tex_ground.use(location=3)
-            self.prog_ground['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-            self.prog_ground['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-            self.vao_ground.render(moderngl.TRIANGLES)
+        # Environment rendering (terrain + objects) - Skybox/Ground texture yerine
+        if hasattr(self, 'environment') and self.environment is not None:
+            # Real environment rendering
+            self.render_environment()
+        else:
+            # Fallback: Eski skybox/ground texture sistemi
+            if self.tex_sky:
+                self.ctx.disable(moderngl.DEPTH_TEST)
+                self.tex_sky.use(location=2)
+                self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+                self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+                self.vao_sky.render(moderngl.TRIANGLES)
+                self.ctx.enable(moderngl.DEPTH_TEST)
+                
+            if self.tex_ground:
+                self.tex_ground.use(location=3)
+                self.prog_ground['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+                self.prog_ground['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+                self.vao_ground.render(moderngl.TRIANGLES)
         
     def end_frame(self, time=0.0):
         """Render döngüsünü bitir (Post-Process & Bloom & Draw to Output FBO)"""

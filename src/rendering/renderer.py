@@ -37,6 +37,9 @@ class GLRenderer:
         # 2. Ground Shader (Textured) (Replaces Grid)
         self.prog_ground = self._load_program('ground_vs.glsl', 'ground_fs.glsl')
         
+        # 3. Terrain Shader (Realistic)
+        self.prog_terrain = self._load_program('terrain_vs.glsl', 'terrain_fs.glsl')
+        
         # --- GEOMETRY ---
         # Full Screen Quad (Reusable for Sky, Ground, Post)
         # We need UVs for Post, but Sky/Ground just need positions.
@@ -147,7 +150,7 @@ class GLRenderer:
         self.prog_bloom_combine = self._load_program('screen_vs.glsl', 'bloom_combine_fs.glsl')
         
         self.bloom_enabled = True
-        self.bloom_intensity = 0.5
+        self.bloom_intensity = 0.3
         self.bloom_threshold = 0.8
         
         # --- SHADOW MAPPING SETUP ---
@@ -219,6 +222,9 @@ class GLRenderer:
         self.tex_ground = self.ctx.texture((1, 1), 3, black_pixel)
         self.tex_ground.filter = (moderngl.NEAREST, moderngl.NEAREST)
         self.prog_ground['groundTexture'] = 3
+        
+        # Generate procedural terrain texture
+        self._generate_terrain_texture()
             
     def update_camera(self, position, rotation):
         """Kamera durumunu güncelle"""
@@ -472,9 +478,9 @@ class GLRenderer:
         
         self.vbo_terrain = self.ctx.buffer(terrain_mesh.tobytes())
         self.vao_terrain = self.ctx.simple_vertex_array(
-            self.prog_aircraft,  # box shader'ı tekrar kullan
-            self.vbo_terrain, 
-            'in_position', 'in_normal'
+            self.prog_terrain,
+            self.vbo_terrain,
+            'in_position', 'in_normal', 'in_texcoord'
         )
         self.terrain_vertex_count = len(terrain_mesh) // 6  # 6 float per vertex
         
@@ -503,8 +509,60 @@ class GLRenderer:
             self.prog_aircraft, self.vbo_tree,
             'in_position', 'in_normal'
         )
+        
+        # Arena pole mesh (for boundary markers)
+        pole_mesh = GeometryGenerator.create_pole_mesh(height=1.0, radius=0.5)  # Unit height
+        self.vbo_pole = self.ctx.buffer(pole_mesh.tobytes())
+        self.vao_pole = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_pole,
+            'in_position', 'in_normal'
+        )
+        self.pole_vertex_count = len(pole_mesh) // 6
+        
+        # Arena cone mesh (for edge markers)
+        cone_mesh = GeometryGenerator.create_cone_mesh(height=1.0, radius=0.5)
+        self.vbo_cone = self.ctx.buffer(cone_mesh.tobytes())
+        self.vao_cone = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_cone,
+            'in_position', 'in_normal'
+        )
+        self.cone_vertex_count = len(cone_mesh) // 6
+
+        # Arena helipad mesh (ring)
+        helipad_mesh = GeometryGenerator.create_ring_mesh(outer_radius=1.0, inner_radius=0.8)
+        self.vbo_helipad = self.ctx.buffer(helipad_mesh.tobytes())
+        self.vao_helipad = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_helipad,
+            'in_position', 'in_normal'
+        )
+        self.helipad_vertex_count = len(helipad_mesh) // 6
+        
+        # Arena ground marker mesh (for safe zones)
+        marker_mesh = GeometryGenerator.create_ground_marker(1.0, 1.0)  # Unit size
+        self.vbo_ground_marker = self.ctx.buffer(marker_mesh.tobytes())
+        self.vao_ground_marker = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_ground_marker,
+            'in_position', 'in_normal'
+        )
+        self.ground_marker_vertex_count = len(marker_mesh) // 6
+        
+        # Tent mesh
+        tent_mesh = GeometryGenerator.create_tent_mesh(1.0, 1.0, 1.0)
+        self.vbo_tent = self.ctx.buffer(tent_mesh.tobytes())
+        self.vao_tent = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_tent,
+            'in_position', 'in_normal'
+        )
+        
+        # Box mesh
+        box_mesh = GeometryGenerator.create_box_mesh(1.0, 1.0, 1.0)
+        self.vbo_box = self.ctx.buffer(box_mesh.tobytes())
+        self.vao_box = self.ctx.simple_vertex_array(
+            self.prog_aircraft, self.vbo_box,
+            'in_position', 'in_normal'
+        )
     
-    def render_terrain(self, terrain_color=(0.34, 0.55, 0.27)):
+    def render_terrain(self, terrain_color=(0.34, 0.55, 0.27)):  # Green terrain
         """
         Terrain mesh'i render et.
         
@@ -516,36 +574,223 @@ class GLRenderer:
         
         import pyrr
         
-        # NED → OpenGL koordinat dönüşümü 
-        # GLCamera.SIM_TO_GL ile aynı - terrain mesh NED'de oluşturuldu
-        # Sim: X=Forward, Y=Right, Z=Down  → GL: X=Right, Y=Up, Z=-Forward
-        # Terrain mesh: X=position(0-2000), Y=height(0), Z=position(0-2000)
-        # Bu aslında NED değil, XYZ world coords. Terrain'i dönüştürmeliyiz.
-        sim_to_gl = np.array([
-            [0, 1, 0, 0],   # GL.X = Sim.Y (mesh X -> GL X) 
-            [0, 0, -1, 0],  # GL.Y = -Sim.Z 
-            [-1, 0, 0, 0],  # GL.Z = -Sim.X
-            [0, 0, 0, 1]
-        ], dtype='f4')
+        # Terrain mesh is created in XYZ coords: X=world_x (0..2000), Y=height, Z=world_z (0..2000)
+        # 
+        # PROBLEM: GLCamera applies SIM_TO_GL transform which expects NED coordinates (X=fwd, Y=right, Z=down)
+        # But terrain mesh is in OpenGL-style coords (Y=up)
+        # 
+        # SIMPLE SOLUTION: Just use identity matrix. The camera's SIM_TO_GL will map:
+        # - Camera sees terrain X axis as its "right" direction  
+        # - Camera sees terrain Y axis (height) as "-Z" (into screen after transform)
+        # - Camera sees terrain Z axis as "-X" (left-ish)
+        #
+        # This means we need to position camera correctly in NED-like coords that get transformed.
+        # Just use identity and center the terrain:
+        model = np.eye(4, dtype='f4')
+        model[3, 0] = -1000.0  # Translate X
+        model[3, 2] = -1000.0  # Translate Z
         
-        # Terrain mesh uses: X=world_x, Y=height, Z=world_z (already OpenGL-like)
-        # But the world coords need to match NED world where camera is
-        # Actually terrain is drawn in "raw" coords while camera views in transformed coords
-        # Apply inverse transform: GL -> Sim so terrain appears in camera's view
-        # Or just apply same transform so both are in same space
-        model = sim_to_gl
+        self.prog_terrain['m_model'].write(model.tobytes())
+        self.prog_terrain['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+        self.prog_terrain['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+        self.prog_terrain['u_color'].value = (1.0, 1.0, 1.0) # White base for texture
         
-        self.prog_aircraft['m_model'].write(model.tobytes())
-        self.prog_aircraft['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-        self.prog_aircraft['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-        self.prog_aircraft['u_color'].value = terrain_color
+        if 'viewPos' in self.prog_terrain:
+            self.prog_terrain['viewPos'].value = tuple(self.camera.position)
+        if 'lightSpaceMatrix' in self.prog_terrain and hasattr(self, 'light_space_matrix'):
+            self.prog_terrain['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
+        
+        if hasattr(self, 'tex_terrain'):
+            self.prog_terrain['u_texture'] = 0
+            self.tex_terrain.use(location=0)
+            
+        self.vao_terrain.render()
+        
+    def render_sky(self):
+        """Render Skybox (Procedural or Textured)"""
+        # Disable Depth Write (Sky is background)
+        self.ctx.enable(moderngl.DEPTH_TEST) # Ensure depth test needed? 
+        # Usually skybox is drawn last at max depth OR first with depth write off.
+        # Let's draw FIRST (after clear) with Depth Write OFF.
+        # But we are calling this inside render_environment which might be after objects?
+        # Ideally: Clear -> Render Sky -> Render Scene
+        
+        self.ctx.depth_mask = False
+        
+        # Use Sky Shader
+        self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+        self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+        
+        if 'lightPos' in self.prog_sky:
+            self.prog_sky['lightPos'].value = self.light_pos
+            
+        if hasattr(self, 'tex_sky'):
+            self.prog_sky['skyTexture'] = 2
+            self.tex_sky.use(location=2)
+            
+        # self.vao_sky uses vbo_quad_2d (-1..1), shader sets Z=0.9999
+        self.vao_sky.render(moderngl.TRIANGLES)
+        
+        self.ctx.depth_mask = True
+
+    def init_arena(self, arena):
+        """
+        Arena için GPU kaynaklarını hazırla.
+        
+        Args:
+            arena: TeknofestArena objesi
+        """
+        self.arena = arena
+        self._init_object_meshes()  # Ensure meshes are ready
+    
+    def render_arena(self):
+        """
+        Arena sınır işaretçilerini ve güvenli bölgeleri render et.
+        """
+        if not hasattr(self, 'arena') or self.arena is None:
+            return
+        
+        if not hasattr(self, 'vao_pole'):
+            return
+        
+        import pyrr
+        
+        view = self.camera.get_view_matrix().astype('f4')
+        proj = self.camera.get_projection_matrix().astype('f4')
+        
+        self.prog_aircraft['m_view'].write(view.tobytes())
+        self.prog_aircraft['m_proj'].write(proj.tobytes())
         
         if 'viewPos' in self.prog_aircraft:
             self.prog_aircraft['viewPos'].value = tuple(self.camera.position)
-        if 'lightSpaceMatrix' in self.prog_aircraft and hasattr(self, 'light_space_matrix'):
-            self.prog_aircraft['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
         
-        self.vao_terrain.render()
+        # Render boundary markers
+        for marker in self.arena.markers:
+            pos = marker['position']
+            height = marker.get('height', 1.0)
+            color = marker['color']
+            marker_type = marker.get('type', 'corner_pole')
+            radius = marker.get('radius', 0.5)
+            
+            model = np.eye(4, dtype='f4')
+            
+            if marker_type == 'corner_pole':
+                # Cylinder pole
+                model[0, 0] = 1.0  # X scale (radius built into mesh, but we can scale if needed)
+                model[1, 1] = height 
+                model[2, 2] = 1.0 
+                model[3, 0] = pos[0]
+                model[3, 1] = pos[1] 
+                model[3, 2] = pos[2]
+                
+                self.prog_aircraft['m_model'].write(model.tobytes())
+                self.prog_aircraft['u_color'].value = color
+                self.vao_pole.render()
+                
+            elif marker_type == 'cone':
+                # Cone marker
+                model[0, 0] = 1.0 
+                model[1, 1] = height
+                model[2, 2] = 1.0
+                model[3, 0] = pos[0]
+                model[3, 1] = pos[1]
+                model[3, 2] = pos[2]
+                
+                self.prog_aircraft['m_model'].write(model.tobytes())
+                self.prog_aircraft['u_color'].value = color
+                if hasattr(self, 'vao_cone'):
+                    self.vao_cone.render()
+                    
+            elif marker_type == 'helipad':
+                # Helipad ring
+                # Radius scaling: Mesh is radius 1.0 approx? Outer radius was 1.0 in geometry.py
+                # So scale X/Z by marker radius
+                scale = radius
+                model[0, 0] = scale
+                model[1, 1] = 1.0 
+                model[2, 2] = scale
+                model[3, 0] = pos[0]
+                model[3, 1] = pos[1]
+                model[3, 2] = pos[2]
+                
+                self.prog_aircraft['m_model'].write(model.tobytes())
+                self.prog_aircraft['u_color'].value = color
+                if hasattr(self, 'vao_helipad'):
+                    self.vao_helipad.render()
+        
+        # Render safe zone ground markers
+        for zone in self.arena.safe_zones:
+            center = zone.center
+            size = zone.size
+            
+            # Model matrix: translate to zone center, scale to zone size
+            model = np.eye(4, dtype='f4')
+            model[0, 0] = size[0]  # Width
+            model[1, 1] = 1.0  # Height (thin)
+            model[2, 2] = size[2]  # Depth
+            model[3, 0] = center[0]
+            model[3, 1] = 0.5  # Slightly above ground
+            model[3, 2] = center[2]
+            
+            self.prog_aircraft['m_model'].write(model.tobytes())
+            self.prog_aircraft['u_color'].value = zone.color
+            self.vao_ground_marker.render()
+            
+        # Render decorative detail objects (tents, boxes)
+        if hasattr(self.arena, 'detail_objects'):
+            for obj in self.arena.detail_objects:
+                pos = obj['position']
+                color = obj['color']
+                scale = obj.get('scale', (1.0, 1.0, 1.0))
+                rotation = obj.get('rotation', 0.0)
+                obj_type = obj['type']
+                
+                model = np.eye(4, dtype='f4')
+                
+                # Scale -> Rotate -> Translate
+                # Note: We use pyrr for easier matrix math if preferred, but simple numpy is also ok.
+                import pyrr
+                s_mat = pyrr.matrix44.create_from_scale(scale, dtype='f4')
+                r_mat = pyrr.matrix44.create_from_y_rotation(rotation, dtype='f4')
+                t_mat = pyrr.matrix44.create_from_translation(pos, dtype='f4')
+                
+                model = pyrr.matrix44.multiply(s_mat, r_mat)
+                model = pyrr.matrix44.multiply(model, t_mat)
+                
+                self.prog_aircraft['m_model'].write(model.tobytes())
+                self.prog_aircraft['u_color'].value = color
+                
+                if obj_type == 'tent' and hasattr(self, 'vao_tent'):
+                    self.vao_tent.render()
+                elif obj_type == 'box' and hasattr(self, 'vao_box'):
+                    self.vao_box.render()
+
+    def render_environment_objects_only(self):
+        """
+        Called if we want strict separation, but render_environment calls all.
+        """
+        if hasattr(self, 'arena'):
+             self.render_arena()
+
+    def _generate_terrain_texture(self):
+        """Generate procedural grass texture."""
+        size = 512
+        # Base green color (Forest Green)
+        base_color = np.array([34, 139, 34], dtype=np.float32)
+        
+        # Create noise
+        texture_data = np.zeros((size, size, 3), dtype=np.uint8)
+        
+        # Simple noise: random variations
+        noise = np.random.normal(0, 15, (size, size, 3))
+        
+        # Apply base color
+        final_color = base_color + noise
+        texture_data = np.clip(final_color, 0, 255).astype(np.uint8)
+        
+        self.tex_terrain = self.ctx.texture((size, size), 3, texture_data.tobytes())
+        self.tex_terrain.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        self.tex_terrain.build_mipmaps()
     
     def render_world_objects(self, objects):
         """
@@ -602,17 +847,22 @@ class GLRenderer:
     
     def render_environment(self):
         """
-        Tüm environment'ı render et (terrain + objects).
+        Tüm environment'ı render et (sky + terrain + arena + objects).
         init_environment() çağrıldıktan sonra kullanılır.
         """
-        if not hasattr(self, 'environment'):
-            return
+        # 1. Skybox
+        self.render_sky()
         
-        # Terrain
+        # 2. Terrain
         self.render_terrain()
         
-        # World objects
-        self.render_world_objects(self.environment.get_all_objects())
+        # 3. Arena (poles, markers)
+        if hasattr(self, 'arena'):
+            self.render_arena()
+            
+        # 4. World objects (trees, buildings)
+        if hasattr(self, 'environment'):
+            self.render_world_objects(self.environment.get_all_objects())
 
     def begin_shadow_pass(self):
         """Start Shadow Map Rendering Pass"""

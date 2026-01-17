@@ -1,16 +1,17 @@
 #version 330
 
-
 in vec3 v_normal;
 in vec3 v_fragPos;
 in vec3 v_color;
 in vec4 v_fragPosLightSpace;
+in vec2 v_texcoord;
 
 out vec4 f_color;
 
 uniform vec3 lightPos = vec3(100.0, 1000.0, 100.0); // Sun (Top-Down)
 uniform vec3 viewPos;
 uniform sampler2D shadowMap;
+uniform sampler2D u_texture;
 
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -44,8 +45,10 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     return shadow;
 }
 
-
 void main() {
+    // Texture sampling
+    vec4 texColor = texture(u_texture, v_texcoord);
+    
     // Ambient
     float ambientStrength = 0.3;
     vec3 ambient = ambientStrength * vec3(1.0, 1.0, 1.0);
@@ -56,19 +59,23 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * vec3(1.0, 1.0, 0.9);
     
-    // Specular
-    float specularStrength = 0.5;
+    // Specular (Terrain is usually low specular)
+    float specularStrength = 0.1;
     vec3 viewDir = normalize(viewPos - v_fragPos);
     vec3 reflectDir = reflect(-lightDir, norm);  
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
-    vec3 specular = specularStrength * vec3(1.0, 1.0, 1.0);  
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 8); // Lower shininess for dirt/grass
+    vec3 specular = specularStrength * vec3(1.0, 1.0, 1.0) * spec;  
     
     // Shadow
     float shadow = ShadowCalculation(v_fragPosLightSpace, norm, lightDir);
     
-    // Simple AO: Darken base of objects
-    float ao = clamp(v_fragPos.y / 2.0 + 0.8, 0.8, 1.0);
-    vec3 result = (ambient + (1.0 - shadow) * (diffuse + specular)) * v_color * ao;
+    // Combine (Texture * Lighting)
+    // We multiply result by v_color (tint) AND texColor
+    vec3 lighting = (ambient + (1.0 - shadow) * (diffuse + specular));
+    
+    // Simple AO: Darken valleys slightly
+    float ao = clamp(v_fragPos.y / 15.0 + 0.7, 0.7, 1.0);
+    vec3 result = lighting * v_color * texColor.rgb * ao;
     
     // Fog - Realistic Atmospheric Scattering
     float dist = length(viewPos - v_fragPos);

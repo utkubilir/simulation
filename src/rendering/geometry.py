@@ -259,6 +259,13 @@ class GeometryGenerator:
                 p01 = [x0, h01, z1]
                 p11 = [x1, h11, z1]
                 
+                # UV Koordinatları (Texture Repeat: 20x20)
+                uv_scale = 20.0
+                uv00 = [x0 / width * uv_scale, z0 / depth * uv_scale]
+                uv10 = [x1 / width * uv_scale, z0 / depth * uv_scale]
+                uv01 = [x0 / width * uv_scale, z1 / depth * uv_scale]
+                uv11 = [x1 / width * uv_scale, z1 / depth * uv_scale]
+                
                 # Normal hesaplama (cross product - sıra önemli!)
                 # OpenGL'de +Y yukarı, normal yukarı bakmalı
                 def calc_normal(p1, p2, p3):
@@ -272,16 +279,292 @@ class GeometryGenerator:
                     return n / norm
                 
                 # İki üçgen (quad) - CCW winding
+                # Vertex format: [x, y, z, nx, ny, nz, u, v]
+                
                 # Tri 1: p00, p10, p11
                 n1 = calc_normal(p00, p10, p11)
-                vertices.extend([*p00, *n1])
-                vertices.extend([*p10, *n1])
-                vertices.extend([*p11, *n1])
+                vertices.extend([*p00, *n1, *uv00])
+                vertices.extend([*p10, *n1, *uv10])
+                vertices.extend([*p11, *n1, *uv11])
                 
                 # Tri 2: p00, p11, p01
                 n2 = calc_normal(p00, p11, p01)
-                vertices.extend([*p00, *n2])
-                vertices.extend([*p11, *n2])
-                vertices.extend([*p01, *n2])
+                vertices.extend([*p00, *n2, *uv00])
+                vertices.extend([*p11, *n2, *uv11])
+                vertices.extend([*p01, *n2, *uv01])
         
         return np.array(vertices, dtype='f4')
+    
+    @staticmethod
+    def create_pole_mesh(height: float = 10.0, radius: float = 0.5, segments: int = 8):
+        """
+        Silindirik direk mesh'i oluşturur (arena sınır işaretçileri için).
+        
+        Args:
+            height: Direk yüksekliği
+            radius: Direk yarıçapı
+            segments: Segment sayısı (ne kadar yuvarlak)
+            
+        Returns:
+            vertices (np.array): [x, y, z, nx, ny, nz] formatında vertex buffer
+        """
+        vertices = []
+        
+        # Silindirin yan yüzeyi
+        for i in range(segments):
+            angle1 = (2 * np.pi * i) / segments
+            angle2 = (2 * np.pi * (i + 1)) / segments
+            
+            x1, z1 = np.cos(angle1) * radius, np.sin(angle1) * radius
+            x2, z2 = np.cos(angle2) * radius, np.sin(angle2) * radius
+            
+            # Normal vektörler (dışa doğru)
+            nx1, nz1 = np.cos(angle1), np.sin(angle1)
+            nx2, nz2 = np.cos(angle2), np.sin(angle2)
+            
+            # Alt ve üst noktalar
+            p1_bot = [x1, 0, z1]
+            p2_bot = [x2, 0, z2]
+            p1_top = [x1, height, z1]
+            p2_top = [x2, height, z2]
+            
+            # Triangle 1: p1_bot, p2_bot, p1_top
+            vertices.extend([*p1_bot, nx1, 0, nz1])
+            vertices.extend([*p2_bot, nx2, 0, nz2])
+            vertices.extend([*p1_top, nx1, 0, nz1])
+            
+            # Triangle 2: p2_bot, p2_top, p1_top
+            vertices.extend([*p2_bot, nx2, 0, nz2])
+            vertices.extend([*p2_top, nx2, 0, nz2])
+            vertices.extend([*p1_top, nx1, 0, nz1])
+        
+        # Üst kapak
+        for i in range(segments):
+            angle1 = (2 * np.pi * i) / segments
+            angle2 = (2 * np.pi * (i + 1)) / segments
+            
+            x1, z1 = np.cos(angle1) * radius, np.sin(angle1) * radius
+            x2, z2 = np.cos(angle2) * radius, np.sin(angle2) * radius
+            
+            # Center, p1, p2
+            vertices.extend([0, height, 0, 0, 1, 0])
+            vertices.extend([x1, height, z1, 0, 1, 0])
+            vertices.extend([x2, height, z2, 0, 1, 0])
+        
+        return np.array(vertices, dtype='f4')
+    
+    @staticmethod
+    def create_ground_marker(width: float = 50.0, depth: float = 50.0, height: float = 0.1):
+        """
+        Zemin işaretçisi mesh'i oluşturur (safe zone görselleştirmesi için).
+        Düz bir dikdörtgen.
+        
+        Args:
+            width: X boyutu
+            depth: Z boyutu  
+            height: Y yüksekliği (zemine yakın)
+            
+        Returns:
+            vertices (np.array): [x, y, z, nx, ny, nz] formatında vertex buffer
+        """
+        w, d = width / 2, depth / 2
+        y = height
+        
+        # Üst yüzey (normal yukarı)
+        vertices = [
+            -w, y, -d, 0, 1, 0,
+             w, y, -d, 0, 1, 0,
+             w, y,  d, 0, 1, 0,
+            -w, y, -d, 0, 1, 0,
+             w, y,  d, 0, 1, 0,
+            -w, y,  d, 0, 1, 0,
+        ]
+        
+        return np.array(vertices, dtype='f4')
+
+    @staticmethod
+    def create_cone_mesh(height: float = 1.0, radius: float = 0.5, segments: int = 16):
+        """
+        Creates a cone mesh (for boundary markers/cones).
+        Vertex format: [x, y, z, nx, ny, nz]
+        """
+        vertices = []
+        
+        # Cone Body
+        for i in range(segments):
+            angle1 = (2 * np.pi * i) / segments
+            angle2 = (2 * np.pi * (i + 1)) / segments
+            
+            x1, z1 = np.cos(angle1) * radius, np.sin(angle1) * radius
+            x2, z2 = np.cos(angle2) * radius, np.sin(angle2) * radius
+            
+            # Normal vector (approximate)
+            # Normal is tilted upwards. Slope = height/radius.
+            # Normal tilt angle = atan(radius/height)
+            slope_len = np.sqrt(height**2 + radius**2)
+            ny = radius / slope_len
+            nx_factor = height / slope_len
+            
+            n1 = [np.cos(angle1) * nx_factor, ny, np.sin(angle1) * nx_factor]
+            n2 = [np.cos(angle2) * nx_factor, ny, np.sin(angle2) * nx_factor]
+            
+            # Tip of cone (top)
+            p_top = [0, height, 0]
+            # Base points
+            p1 = [x1, 0, z1]
+            p2 = [x2, 0, z2]
+            
+            # Triangle: p_top, p1, p2 (CCW)
+            # Using average normal for top vertex or specific face normal? 
+            # Smooth shading looks better with vertex normals.
+            # Top normal is tricky (singularity). Pointing up [0,1,0] works ok.
+            
+            vertices.extend([*p_top, 0, 1, 0])
+            vertices.extend([*p1, *n1])
+            vertices.extend([*p2, *n2])
+            
+        # Bottom Cap (Circle)
+        for i in range(segments):
+            angle1 = (2 * np.pi * i) / segments
+            angle2 = (2 * np.pi * (i + 1)) / segments
+            
+            x1, z1 = np.cos(angle1) * radius, np.sin(angle1) * radius
+            x2, z2 = np.cos(angle2) * radius, np.sin(angle2) * radius
+            
+            # Center, p2, p1 (CCW looking from bottom implies clockwise looking from top, 
+            # normals are [0, -1, 0])
+             
+            vertices.extend([0, 0, 0, 0, -1, 0])
+            vertices.extend([x2, 0, z2, 0, -1, 0])
+            vertices.extend([x1, 0, z1, 0, -1, 0])
+            
+        return np.array(vertices, dtype='f4')
+
+    @staticmethod
+    def create_ring_mesh(outer_radius: float = 1.0, inner_radius: float = 0.8, segments: int = 16):
+        """
+        Creates a flat ring mesh (for helipad marking).
+        """
+        vertices = []
+        y = 0.05  # Slightly elevated
+        
+        for i in range(segments):
+            angle1 = (2 * np.pi * i) / segments
+            angle2 = (2 * np.pi * (i + 1)) / segments
+            
+            cos1, sin1 = np.cos(angle1), np.sin(angle1)
+            cos2, sin2 = np.cos(angle2), np.sin(angle2)
+            
+            # Quad formed by 2 triangles
+            p1_out = [cos1 * outer_radius, y, sin1 * outer_radius]
+            p1_in  = [cos1 * inner_radius, y, sin1 * inner_radius]
+            p2_out = [cos2 * outer_radius, y, sin2 * outer_radius]
+            p2_in  = [cos2 * inner_radius, y, sin2 * inner_radius]
+            
+            up = [0, 1, 0]
+            
+            # Tri 1: p1_in, p1_out, p2_out
+            vertices.extend([*p1_in, *up])
+            vertices.extend([*p1_out, *up])
+            vertices.extend([*p2_out, *up])
+            
+            # Tri 2: p1_in, p2_out, p2_in
+            vertices.extend([*p1_in, *up])
+            vertices.extend([*p2_out, *up])
+            vertices.extend([*p2_in, *up])
+            
+        return np.array(vertices, dtype='f4')
+
+    @staticmethod
+    def create_tent_mesh(width: float = 4.0, depth: float = 6.0, height: float = 3.0):
+        """
+        Creates a simple tent mesh (rectangular prism with pyramid top).
+        """
+        vertices = []
+        w, d, h = width / 2, depth / 2, height
+        h_wall = h * 0.6  # Wall height before roof
+        
+        def add_face(p1, p2, p3, p4, n):
+            # Two triangles for a quad face
+            vertices.extend([*p1, *n])
+            vertices.extend([*p2, *n])
+            vertices.extend([*p3, *n])
+            vertices.extend([*p1, *n])
+            vertices.extend([*p3, *n])
+            vertices.extend([*p4, *n])
+
+        # Wall faces
+        # Front/Back
+        add_face([-w, 0, d], [w, 0, d], [w, h_wall, d], [-w, h_wall, d], [0, 0, 1])
+        add_face([-w, 0, -d], [-w, h_wall, -d], [w, h_wall, -d], [w, 0, -d], [0, 0, -1])
+        # Left/Right
+        add_face([-w, 0, -d], [-w, 0, d], [-w, h_wall, d], [-w, h_wall, -d], [-1, 0, 0])
+        add_face([w, 0, -d], [w, h_wall, -d], [w, h_wall, d], [w, 0, d], [1, 0, 0])
+        
+        # Roof (Pyramid top)
+        # 4 Triangles meeting at peak
+        peak = [0, h, 0]
+        p_nw = [-w, h_wall, -d]
+        p_ne = [w, h_wall, -d]
+        p_sw = [-w, h_wall, d]
+        p_se = [w, h_wall, d]
+
+        # North tri
+        n_n = [0, d/h, -h/d] 
+        n_n = n_n / np.linalg.norm(n_n)
+        vertices.extend([*peak, *n_n])
+        vertices.extend([*p_ne, *n_n])
+        vertices.extend([*p_nw, *n_n])
+        
+        # South tri
+        n_s = [0, d/h, h/d]
+        n_s = n_s / np.linalg.norm(n_s)
+        vertices.extend([*peak, *n_s])
+        vertices.extend([*p_sw, *n_s])
+        vertices.extend([*p_se, *n_s])
+        
+        # West tri
+        n_w = [-h/w, w/h, 0]
+        n_w = n_w / np.linalg.norm(n_w)
+        vertices.extend([*peak, *n_w])
+        vertices.extend([*p_nw, *n_w])
+        vertices.extend([*p_sw, *n_w])
+        
+        # East tri
+        n_e = [h/w, w/h, 0]
+        n_e = n_e / np.linalg.norm(n_e)
+        vertices.extend([*peak, *n_e])
+        vertices.extend([*p_se, *n_e])
+        vertices.extend([*p_ne, *n_e])
+        
+        return np.array(vertices, dtype='f4')
+
+    @staticmethod
+    def create_box_mesh(width: float = 1.0, height: float = 1.0, depth: float = 1.0):
+        """
+        Creates a simple unit box mesh centered at origin horizontally, resting on Y=0.
+        """
+        vertices = []
+        w, h, d = width / 2, height, depth / 2
+        
+        def add_face(p1, p2, p3, p4, n):
+            vertices.extend([*p1, *n])
+            vertices.extend([*p2, *n])
+            vertices.extend([*p3, *n])
+            vertices.extend([*p1, *n])
+            vertices.extend([*p3, *n])
+            vertices.extend([*p4, *n])
+
+        # Bottom
+        add_face([-w, 0, -d], [w, 0, -d], [w, 0, d], [-w, 0, d], [0, -1, 0])
+        # Top
+        add_face([-w, h, -d], [-w, h, d], [w, h, d], [w, h, -d], [0, 1, 0])
+        # Sides
+        add_face([-w, 0, d], [w, 0, d], [w, h, d], [-w, h, d], [0, 0, 1])
+        add_face([-w, 0, -d], [-w, h, -d], [w, h, -d], [w, 0, -d], [0, 0, -1])
+        add_face([-w, 0, -d], [-w, 0, d], [-w, h, d], [-w, h, -d], [-1, 0, 0])
+        add_face([w, 0, -d], [w, h, -d], [w, h, d], [w, 0, d], [1, 0, 0])
+
+        return np.array(vertices, dtype='f4')
+
+

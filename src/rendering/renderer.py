@@ -1,7 +1,6 @@
 import moderngl
 import numpy as np
 import os
-import cv2  # Asset loading
 from src.rendering.camera import GLCamera
 
 class GLRenderer:
@@ -162,7 +161,7 @@ class GLRenderer:
         self.fbo_shadow = self.ctx.framebuffer(depth_attachment=self.tex_shadow)
         
         self.prog_shadow = self._load_program('shadow_depth_vs.glsl', 'shadow_depth_fs.glsl')
-        self.light_pos = (100.0, -200.0, -200.0) # Fixed Light Position
+        self.light_pos = (100.0, 1000.0, 100.0) # Fixed Light Position (Top-Down for correct diffuse)
         
         # 2. Screen Quad Shader
         self.prog_post = self._load_program('screen_vs.glsl', 'post_fs.glsl')
@@ -201,59 +200,25 @@ class GLRenderer:
             raise e
             
     def _load_assets(self):
-        """Load Textures"""
-        import pygame
-        assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets')
+        """
+        Create dummy textures for shader fallback system.
         
-        # 1. Sky Texture
-        sky_path = os.path.join(assets_dir, 'sky_texture.png')
-        if os.path.exists(sky_path):
-            try:
-                # Load with CV2 to ensure RGB/BGR correctness or Pygame
-                # Pygame loads as Surface. Moderngl needs bytes.
-                # Use CV2 for consistency
-                img = cv2.imread(sky_path)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # GL expects RGB
-                # Flip Y? OpenGL textures usually originate bottom-left.
-                # Images usually top-left.
-                img = cv2.flip(img, 0) 
-                
-                self.tex_sky = self.ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
-                self.tex_sky.filter = (moderngl.LINEAR, moderngl.LINEAR) # Linear interpolation
-                
-                # Bind to Texture Unit 2 (0=Screen, 1=Depth)
-                self.prog_sky['skyTexture'] = 2 
-            except Exception as e:
-                print(f"Failed to load sky texture: {e}")
-                self.tex_sky = None
-        else:
-            import warnings
-            warnings.warn(f"Sky texture not found at {sky_path}. Rendering may be affected.", UserWarning)
-            self.tex_sky = None
-            
-        # 2. Ground Texture
-        ground_path = os.path.join(assets_dir, 'ground_texture.png')
-        if os.path.exists(ground_path):
-            try:
-                img = cv2.imread(ground_path)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                # No flip needed for top-down map if UVs align? 
-                # World X,Y maps to UV.
-                
-                self.tex_ground = self.ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
-                self.tex_ground.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
-                self.tex_ground.build_mipmaps()
-                self.tex_ground.repeat_x = True
-                self.tex_ground.repeat_y = True
-                
-                self.prog_ground['groundTexture'] = 3
-            except Exception as e:
-                 print(f"Failed to load ground texture: {e}")
-                 self.tex_ground = None
-        else:
-            import warnings
-            warnings.warn(f"Ground texture not found at {ground_path}. Rendering may be affected.", UserWarning)
-            self.tex_ground = None
+        Real rendering uses Environment (terrain mesh + world objects).
+        Sky and ground shaders have procedural fallbacks when textures return black.
+        """
+        # Create 1x1 black dummy textures - this triggers shader fallback colors
+        # (shader checks if texture luminance < 0.01 and uses procedural colors)
+        black_pixel = bytes([0, 0, 0])
+        
+        # Dummy sky texture
+        self.tex_sky = self.ctx.texture((1, 1), 3, black_pixel)
+        self.tex_sky.filter = (moderngl.NEAREST, moderngl.NEAREST)
+        self.prog_sky['skyTexture'] = 2
+        
+        # Dummy ground texture
+        self.tex_ground = self.ctx.texture((1, 1), 3, black_pixel)
+        self.tex_ground.filter = (moderngl.NEAREST, moderngl.NEAREST)
+        self.prog_ground['groundTexture'] = 3
             
     def update_camera(self, position, rotation):
         """Kamera durumunu güncelle"""
@@ -539,7 +504,7 @@ class GLRenderer:
             'in_position', 'in_normal'
         )
     
-    def render_terrain(self, terrain_color=(0.15, 0.25, 0.1)):
+    def render_terrain(self, terrain_color=(0.34, 0.55, 0.27)):
         """
         Terrain mesh'i render et.
         
@@ -673,7 +638,7 @@ class GLRenderer:
         
         # 1. Main Pass
         self.fbo.use()
-        self.ctx.clear(0.4, 0.6, 0.8)  # Açık mavi gökyüzü arka planı
+        self.ctx.clear(0.53, 0.81, 0.92)  # Sky Blue Background
         self.ctx.enable(moderngl.DEPTH_TEST)
         
         # Bind Shadow Map
@@ -681,24 +646,25 @@ class GLRenderer:
         self.prog_aircraft['shadowMap'] = 5
         
         # Environment rendering (terrain + objects) - Skybox/Ground texture yerine
+        # Always render sky first (with procedural fallback if texture unavailable)
+        if self.tex_sky:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.tex_sky.use(location=2)
+            self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.vao_sky.render(moderngl.TRIANGLES)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+        
+        # Render environment terrain OR fallback ground texture
         if hasattr(self, 'environment') and self.environment is not None:
-            # Real environment rendering
+            # Real environment rendering (terrain mesh + objects)
             self.render_environment()
-        else:
-            # Fallback: Eski skybox/ground texture sistemi
-            if self.tex_sky:
-                self.ctx.disable(moderngl.DEPTH_TEST)
-                self.tex_sky.use(location=2)
-                self.prog_sky['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-                self.prog_sky['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-                self.vao_sky.render(moderngl.TRIANGLES)
-                self.ctx.enable(moderngl.DEPTH_TEST)
-                
-            if self.tex_ground:
-                self.tex_ground.use(location=3)
-                self.prog_ground['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-                self.prog_ground['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-                self.vao_ground.render(moderngl.TRIANGLES)
+        elif self.tex_ground:
+            # Fallback: ground texture
+            self.tex_ground.use(location=3)
+            self.prog_ground['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            self.prog_ground['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.vao_ground.render(moderngl.TRIANGLES)
         
     def end_frame(self, time=0.0):
         """Render döngüsünü bitir (Post-Process & Bloom & Draw to Output FBO)"""

@@ -34,7 +34,7 @@ class SimulationWorld:
         from src.simulation.environment import Environment
         env_config = config.get('environment', {
             'terrain': {
-                'type': 'flat',  # 'flat', 'hills', 'valley'
+                'type': 'hills',  # Creates varying terrain height for 3D appearance
                 'size': self.world_size[:2],
                 'max_height': 30.0
             },

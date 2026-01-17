@@ -1081,10 +1081,10 @@ class FixedCamera:
         # 1. Temel Gradyanlar (Hızlı Render)
         horizon_y = int(h / 2 + np.tan(pitch) * self.focal_length)
         
-        # Gökyüzü (daha gerçekçi mavi)
-        frame[:max(0, min(h, horizon_y+20)), :] = [230, 206, 135]  # Açık mavi (Sky Blue)
-        # Zemin (toprak rengi)
-        frame[max(0, min(h, horizon_y-20)):, :] = [80, 110, 120]   # Gri-Toprak
+        # Gökyüzü (gerçekçi mavi - RGB: 135, 206, 235 Sky Blue)
+        frame[:max(0, min(h, horizon_y+20)), :] = [235, 206, 135]  # BGR format - Açık Mavi
+        # Zemin (yeşil-kahverengi arazi rengi - RGB: 86, 125, 70)
+        frame[max(0, min(h, horizon_y-20)):, :] = [70, 125, 86]   # BGR format - Yeşil Arazi
         
         # Ufuk geçişi (pus)
         if 0 <= horizon_y < h:

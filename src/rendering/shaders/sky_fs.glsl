@@ -35,7 +35,20 @@ void main() {
     float v = 0.5 + pitch / PI;
     
     // Sample texture
-    outColor = texture(skyTexture, vec2(u, v));
+    vec4 texColor = texture(skyTexture, vec2(u, v));
+    
+    // Fallback: If texture is unavailable (returns near-black), use procedural sky gradient
+    float texLuminance = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+    if (texLuminance < 0.01) {
+        // Procedural sky gradient based on elevation
+        // v ranges from 0 (bottom/horizon) to 1 (top/zenith)
+        vec3 horizonColor = vec3(0.53, 0.81, 0.92);  // Light blue at horizon
+        vec3 zenithColor = vec3(0.25, 0.52, 0.96);   // Deeper blue at zenith
+        vec3 skyGradient = mix(horizonColor, zenithColor, clamp(v, 0.0, 1.0));
+        texColor = vec4(skyGradient, 1.0);
+    }
+    
+    outColor = texColor;
     
     // Add fake sun glare if needed, but texture has it.
 }

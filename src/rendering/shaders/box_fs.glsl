@@ -8,7 +8,7 @@ in vec4 v_fragPosLightSpace;
 
 out vec4 f_color;
 
-uniform vec3 lightPos = vec3(100.0, -200.0, -200.0); // Güneş gibi (yukarıdan)
+uniform vec3 lightPos = vec3(100.0, 1000.0, 100.0); // Sun (Top-Down)
 uniform vec3 viewPos;
 uniform sampler2D shadowMap;
 
@@ -71,9 +71,9 @@ void main() {
     float dist = length(viewPos - v_fragPos);
     float fogDensity = 0.002;  // Reduced for aerial view (was 0.04)
     float fogFactor = 1.0 - exp(-dist * fogDensity);
-    fogFactor = clamp(fogFactor, 0.0, 0.7);  // Max 70% fog
+    fogFactor = clamp(fogFactor, 0.0, 1.0);  // Full fog for seamless horizon
     
-    vec3 fogColor = vec3(0.4, 0.5, 0.7);  // Slightly darker fog
+    vec3 fogColor = vec3(0.53, 0.81, 0.92);  // Sky Blue fog
     result = mix(result, fogColor, fogFactor);
     
     f_color = vec4(result, 1.0);

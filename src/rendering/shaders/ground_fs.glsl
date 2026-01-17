@@ -44,6 +44,13 @@ void main() {
     // Sample texture
     vec4 texColor = texture(groundTexture, uv);
     
+    // Fallback: If texture is unavailable (returns near-black), use a default green terrain color
+    float texLuminance = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+    if (texLuminance < 0.01) {
+        // Default green terrain color (grass-like)
+        texColor = vec4(0.34, 0.49, 0.27, 1.0);
+    }
+    
     // Fog Logic (reuse from box/grid)
     float dist = length(fragPos3D - nearPoint); // approximate distance from camera
     float fogDensity = 0.002; // Less fog because we have huge view distance now (Haze=500m logic)

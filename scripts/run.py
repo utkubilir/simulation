@@ -142,7 +142,8 @@ class SimulationRunner:
             self.keyboard = KeyboardMapper()
             self.autopilot = Autopilot()
 
-            if config.get('ui', {}).get('gl_view', False):
+            ui_config = config.get('ui', {})
+            if ui_config.get('gl_view', False) or ui_config.get('gl_view_inset', False):
                 try:
                     from src.simulation.gl_world_viewer import GLWorldViewer
                     arena_config = self.config.get('arena', {
@@ -654,8 +655,16 @@ class SimulationRunner:
         tracks = getattr(self, '_last_tracks', [])
         frame = getattr(self, '_last_frame', None)
         gl_frame = None
-        if self.gl_viewer and self.renderer.show_gl_world:
+        inset_frame = frame
+        ui_config = self.config.get('ui', {})
+        use_gl_world = self.renderer.show_gl_world
+        use_gl_inset = ui_config.get('gl_view_inset', False)
+        if self.gl_viewer and (use_gl_world or use_gl_inset):
             gl_frame = self.gl_viewer.render(world_state, target_id=self.camera_target_id)
+            if use_gl_inset:
+                inset_frame = gl_frame[..., ::-1].copy()
+            if not use_gl_world:
+                gl_frame = None
 
         self.renderer.render(
             world_state=world_state, 
@@ -668,7 +677,8 @@ class SimulationRunner:
             tracks=tracks,
             observer_target_id=self.camera_target_id,
             is_paused=self.world.is_paused,
-            gl_frame=gl_frame
+            gl_frame=gl_frame,
+            inset_frame=inset_frame
         )
 
 

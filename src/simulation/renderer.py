@@ -81,7 +81,7 @@ class Renderer:
         
     def render(self, world_state, lock_state, sim_time=0.0, scenario="", seed=0,
                camera_frame=None, detections=None, tracks=None, observer_target_id=None,
-               is_paused=False, gl_frame=None):
+               is_paused=False, gl_frame=None, inset_frame=None):
         """
         Render the complete UI.
         """
@@ -145,11 +145,11 @@ class Renderer:
             self.map_renderer.render(world_state, lock_state, sim_time, scenario, seed, self.ui_mode)
             
             # 2. Render Inset (Overlay)
-            if camera_frame is None:
+            if inset_frame is None:
                 # Use standard camera resolution for placeholder
-                camera_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                inset_frame = np.zeros((480, 640, 3), dtype=np.uint8)
                 
-            self.inset_renderer.render(camera_frame, detections or [], tracks or [], lock_state, self.ui_mode)
+            self.inset_renderer.render(inset_frame, detections or [], tracks or [], lock_state, self.ui_mode)
             
             # Help text
             font = self.map_renderer.font_small

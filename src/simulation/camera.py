@@ -766,22 +766,27 @@ class FixedCamera:
             
             # --- MAIN PASS ---
             # 1. Kamera Güncelle (environment rendering için önce yapılmalı)
-            # Apply mount_pitch offset to camera orientation (UAV'a göre aşağı bakış)
-            adjusted_orient = np.array(camera_orient, dtype=np.float32).copy()
-            adjusted_orient[1] += self.mount_pitch  # pitch'e ekle (radyan)
+
+            # Orientation Mapping for GLCamera
+            # Sim (NED): [Roll, Pitch, Yaw]
+            # GLCamera expects inputs that map to: Input0->Pitch(X-rot), Input1->Yaw(Y-rot), Input2->Roll(Z-rot)
+            # Mapping:
+            #   GL Input 0 <= Sim Pitch
+            #   GL Input 1 <= -Sim Yaw (CW vs CCW)
+            #   GL Input 2 <= -Sim Roll (CW vs CCW)
+
+            sim_roll = camera_orient[0]
+            sim_pitch = camera_orient[1]
+            sim_yaw = camera_orient[2]
+
+            # [Pitch, Yaw, Roll] for GLCamera
+            gl_orient = np.array([sim_pitch, -sim_yaw, -sim_roll], dtype=np.float32)
             
             # Coordinate Swap for GL (Sim Z=Altitude -> GL Y=Up)
-            # Sim: [X, Y, Altitude] -> GL: [X, Altitude, Y] (assuming Y is depth)
-            # Note: Checking debug results, [500, 200, 500] worked where Y=200 was altitude.
-            # So GL expects [X, Height, Depth].
-            # Sim input is likely [X, Y, Height] or [X, Y, Z].
-            # We map Sim [0] -> GL X, Sim [2] -> GL Y, Sim [1] -> GL Z.
+            # Sim: [X, Y, Altitude] -> GL: [X, Altitude, Y]
             gl_camera_pos = np.array([camera_pos[0], camera_pos[2], camera_pos[1]], dtype=np.float32)
-            
-            # Debug override
-            # gl_camera_pos = np.array([500.0, 200.0, 500.0], dtype=np.float32)
 
-            self.renderer.update_camera(position=gl_camera_pos, rotation=adjusted_orient)
+            self.renderer.update_camera(position=gl_camera_pos, rotation=gl_orient)
             
             # 2. Sahne Başlat (environment + sky rendering)
             self.renderer.begin_frame()

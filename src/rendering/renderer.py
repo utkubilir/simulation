@@ -980,14 +980,17 @@ class GLRenderer:
         """
         # Read from main framebuffer (before post-process)
         # Post-process was causing terrain to disappear
-        buffer = self.fbo.read(components=3, alignment=1)
-        image = np.frombuffer(buffer, dtype=np.uint8)
-        image = image.reshape((self.height, self.width, 3))
+        
+        # Use persistent buffer to avoid allocation
+        expected_size = self.width * self.height * 3
+        if not hasattr(self, '_read_buffer') or self._read_buffer.size != expected_size:
+            self._read_buffer = np.empty((self.height, self.width, 3), dtype=np.uint8)
+
+        self.fbo.read_into(self._read_buffer, components=3, alignment=1)
         
         # Flip Y (OpenGL orijini sol alt, Image sol üst)
-        image = np.flipud(image)
-        
         # RGB -> BGR (OpenCV için)
-        image = image[..., ::-1].copy() # Copy to make it contiguous
+        # Copy to make it contiguous
+        image = self._read_buffer[::-1, :, ::-1].copy()
         
         return image

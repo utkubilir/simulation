@@ -1,0 +1,7 @@
+numpy
+opencv-python
+pygame
+pyyaml
+panda3d
+ultralytics
+pytest

@@ -6,6 +6,7 @@ Bu repo, Teknofest Savaşan İHA yarışması için simülasyon ortamını sağl
 
 - **Senaryo tabanlı simülasyon**: Farklı uçuş ve hedef davranışları için YAML senaryoları.
 - **UI ve headless modları**: Görselleştirme ile veya arayüzsüz çalıştırma seçenekleri.
+- **3D Görselleştirme**: Panda3D tabanlı gerçekçi 3D simülasyon ortamı.
 - **Deterministik çalışma**: Aynı seed ile tekrarlanabilir koşular.
 - **Kamera ve algılama simülasyonu**: Görüş açısı, çözünürlük, gürültü, distorsiyon gibi parametreler.
 - **Takip ve kilitlenme mantığı**: Takipçi ve kilitlenme durum makinesi ile yarışma mantığı.
@@ -13,14 +14,15 @@ Bu repo, Teknofest Savaşan İHA yarışması için simülasyon ortamını sağl
 
 ## Gereksinimler
 
-- Python 3.10+
-- Gerekli bağımlılıklar (ör. `numpy`, `opencv`, `pygame` vb.)
+Proje Python 3.10+ gerektirir. Bağımlılıkları yüklemek için:
 
-> Not: Kurulum yöntemi repo içindeki paketleme yapısına göre değişebilir. Basit kurulum için `pip install -r requirements.txt` (varsa) kullanılabilir.
+```bash
+pip install -r requirements.txt
+```
 
 ## Hızlı Başlangıç
 
-### 1) UI modu (görsel)
+### 1) UI modu (2D Görsel)
 
 ```bash
 python main.py
@@ -32,17 +34,53 @@ Parametrelerle çalıştırma:
 python main.py --scenario easy_lock --uav-count 3 --run-id demo_run
 ```
 
-### 2) Headless modu
+### 2) 3D Simülasyon
+
+Panda3D tabanlı 3D simülasyonu başlatmak için:
+
+```bash
+python main_3d.py
+```
+
+Kontroller:
+- **W/S**: Pitch (Burun yukarı/aşağı)
+- **A/D**: Roll (Sola/sağa yatır)
+- **Q/E**: Yaw (Sola/sağa dön)
+- **Shift/Ctrl**: Gaz Artır/Azalt
+- **C**: Kamera değiştir (Takip/Kokpit/Orbit)
+- **1/2/3**: Kamera modları doğrudan seçim
+- **P**: Otopilot (Combat modu) aç/kapa
+- **ESC**: Çıkış
+
+### 3) Headless modu (Arayüzsüz)
+
+Toplu koşular veya CI ortamları için:
 
 ```bash
 python -m scripts.run --mode headless --scenario easy_lock --seed 42 --duration 30
 ```
 
-### 3) UI modu (scripts.run)
+### 4) UI modu (scripts.run üzerinden)
 
 ```bash
 python -m scripts.run --mode ui --scenario easy_lock --seed 42
 ```
+
+## Benchmark ve Raporlama
+
+Birden fazla senaryoyu toplu olarak çalıştırmak ve performans ölçümü yapmak için:
+
+```bash
+python -m scripts.run_all_scenarios --seeds 42 123 --output results/benchmark_v1
+```
+
+Oluşan sonuçlardan detaylı rapor üretmek için:
+
+```bash
+python -m scripts.generate_report --runs-dir results/benchmark_v1
+```
+
+Bu işlem `results/benchmark_v1/REPORT.md` dosyasını oluşturacaktır.
 
 ## Konfigürasyon
 
@@ -95,8 +133,11 @@ pytest -m unit
 
 ## Dizin Yapısı
 
-- `main.py`: Geriye uyumluluk için wrapper giriş noktası.
+- `main.py`: 2D arayüzlü simülasyon giriş noktası.
+- `main_3d.py`: 3D simülasyon giriş noktası.
 - `scripts/run.py`: Esas CLI girişi (UI/headless seçimleri).
+- `scripts/run_all_scenarios.py`: Benchmark çalıştırıcı.
+- `scripts/generate_report.py`: Rapor oluşturucu.
 - `src/`: Simülasyon, render, UAV, algılama ve takip modülleri.
 - `scenarios/`: Simülasyon senaryoları.
 - `config/`: Genel ayarlar ve ek senaryolar.
@@ -108,3 +149,4 @@ pytest -m unit
 - Aynı senaryo ve seed ile tekrar çalıştırarak deterministik çıktı alabilirsiniz.
 - Headless modu, CI veya hızlı regresyon koşuları için uygundur.
 - UI modu, kamera ve HUD davranışlarını görsel olarak doğrulamak için önerilir.
+- 3D modu, senaryoları gerçekçi bir ortamda gözlemlemek için idealdir.

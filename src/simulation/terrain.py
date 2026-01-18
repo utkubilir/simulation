@@ -20,61 +20,40 @@ class TerrainGenerator:
     """Prosedürel arazi oluşturucu"""
     
     @staticmethod
-    def create_terrain(render, size=2000, resolution=50):
+    def create_terrain(render, size=2000, resolution=200):
         """
         Ana arazi oluştur
-        
-        Args:
-            render: Panda3D render node
-            size: Arazi boyutu (metre)
-            resolution: Grid çözünürlüğü
+        WorldMap kullanarak görsel mesh üretir.
         """
+        from src.simulation.map_data import WorldMap
+
         root = render.attachNewNode("terrain")
         
         # Zemin mesh
         ground = TerrainGenerator._create_height_map(size, resolution)
         ground.reparentTo(root)
         
-        # Dağlar
-        mountains = TerrainGenerator._create_mountains()
-        mountains.reparentTo(root)
-        
         # Pist
         runway = TerrainGenerator._create_runway()
         runway.reparentTo(root)
-        runway.setPos(500, 500, 0.1)
+        # Pist merkezi MapData'dan alınır
+        rc = WorldMap.RUNWAY_CENTER
+        runway.setPos(rc[0], rc[1], 0.1)
         
-        # Binalar
+        # Binalar (MapData'dan)
         buildings = TerrainGenerator._create_buildings()
         buildings.reparentTo(root)
         
-        # Ağaçlar
-        trees = TerrainGenerator._create_trees()
-        trees.reparentTo(root)
+        # Dağlar ve Ağaçlar artık Heightmap veya MapData'dan yönetiliyor.
+        # Ayrı mesh olarak eklenmiyorlar (Z-fighting önlemek için).
         
         return root
     
     @staticmethod
-    def _perlin_noise(x, y, seed=42):
-        """Basit Perlin benzeri noise"""
-        np.random.seed(seed)
-        
-        # Çoklu frekans
-        noise = 0
-        amplitude = 1
-        frequency = 0.002
-        
-        for _ in range(4):
-            noise += amplitude * np.sin(x * frequency + np.random.rand() * 100) * \
-                     np.cos(y * frequency + np.random.rand() * 100)
-            amplitude *= 0.5
-            frequency *= 2
-            
-        return noise
-    
-    @staticmethod
     def _create_height_map(size, resolution):
         """Yükseklik haritası ile zemin"""
+        from src.simulation.map_data import WorldMap
+
         format = GeomVertexFormat.get_v3n3c4()
         vdata = GeomVertexData('terrain', format, Geom.UHStatic)
         
@@ -83,37 +62,23 @@ class TerrainGenerator:
         color = GeomVertexWriter(vdata, 'color')
         
         step = size / resolution
-        half = size / 2
+        # 0..2000 sistemi
         
         heights = np.zeros((resolution + 1, resolution + 1))
         
-        # Yükseklikleri hesapla
+        # Yükseklikleri hesapla (WorldMap'ten)
         for i in range(resolution + 1):
             for j in range(resolution + 1):
-                x = -half + i * step
-                y = -half + j * step
-                
-                # Merkeze yakın düz (pist için)
-                dist_center = np.sqrt((x - 500)**2 + (y - 500)**2)
-                if dist_center < 300:
-                    h = 0
-                else:
-                    # Tepe/dağ yükseklikleri
-                    h = TerrainGenerator._perlin_noise(x, y) * 30
-                    h += TerrainGenerator._perlin_noise(x * 2, y * 2, seed=123) * 15
-                    
-                    # Uzaklara doğru dağlar yükselt
-                    dist_edge = min(abs(x + half), abs(x - half), abs(y + half), abs(y - half))
-                    if dist_edge < 400:
-                        h += (400 - dist_edge) * 0.15
-                        
-                heights[i, j] = max(0, h)
+                x = i * step
+                y = j * step
+                h = WorldMap.get_terrain_height(x, y)
+                heights[i, j] = h
         
         # Vertex'ler
         for i in range(resolution + 1):
             for j in range(resolution + 1):
-                x = -half + i * step
-                y = -half + j * step
+                x = i * step
+                y = j * step
                 z = heights[i, j]
                 
                 vertex.addData3(x, y, z)
@@ -162,96 +127,6 @@ class TerrainGenerator:
         
         return NodePath(node)
     
-    @staticmethod
-    def _create_mountains():
-        """Büyük dağ tepeleri"""
-        root = NodePath("mountains")
-        
-        # Birkaç büyük dağ
-        mountain_positions = [
-            (-800, -600, 0, 150),   # x, y, z_base, height
-            (-600, 800, 0, 120),
-            (900, -700, 0, 180),
-            (700, 900, 0, 140),
-            (-900, 200, 0, 100),
-        ]
-        
-        for mx, my, mz, height in mountain_positions:
-            mountain = TerrainGenerator._create_cone_mountain(height)
-            mountain.reparentTo(root)
-            mountain.setPos(mx, my, mz)
-            
-        return root
-    
-    @staticmethod
-    def _create_cone_mountain(height, radius=None):
-        """Konik dağ"""
-        if radius is None:
-            radius = height * 1.5
-            
-        format = GeomVertexFormat.get_v3n3c4()
-        vdata = GeomVertexData('mountain', format, Geom.UHStatic)
-        
-        vertex = GeomVertexWriter(vdata, 'vertex')
-        normal = GeomVertexWriter(vdata, 'normal')
-        color = GeomVertexWriter(vdata, 'color')
-        
-        segments = 16
-        rings = 8
-        
-        for ring in range(rings + 1):
-            t = ring / rings
-            r = radius * (1 - t * 0.9)  # Daralan yarıçap
-            z = height * t
-            
-            # Renk
-            if t < 0.3:
-                c = (0.3, 0.5, 0.25, 1)   # Yeşil
-            elif t < 0.6:
-                c = (0.5, 0.4, 0.3, 1)    # Kahverengi
-            elif t < 0.85:
-                c = (0.55, 0.5, 0.45, 1)  # Açık kahve
-            else:
-                c = (0.9, 0.9, 0.95, 1)   # Kar
-                
-            for seg in range(segments):
-                angle = 2 * np.pi * seg / segments
-                x = r * np.cos(angle)
-                y = r * np.sin(angle)
-                
-                # Düzensizlik ekle
-                noise = np.sin(angle * 5 + z * 0.1) * radius * 0.1
-                x += noise * np.cos(angle)
-                y += noise * np.sin(angle)
-                
-                vertex.addData3(x, y, z)
-                
-                nx = np.cos(angle)
-                ny = np.sin(angle)
-                nz = radius / height * 0.5
-                n = Vec3(nx, ny, nz).normalized()
-                normal.addData3(n)
-                
-                color.addData4(*c)
-        
-        prim = GeomTriangles(Geom.UHStatic)
-        
-        for ring in range(rings):
-            for seg in range(segments):
-                c0 = ring * segments + seg
-                c1 = ring * segments + (seg + 1) % segments
-                n0 = (ring + 1) * segments + seg
-                n1 = (ring + 1) * segments + (seg + 1) % segments
-                
-                prim.addVertices(c0, c1, n0)
-                prim.addVertices(c1, n1, n0)
-        
-        prim.closePrimitive()
-        
-        geom = Geom(vdata)
-        geom.addPrimitive(prim)
-        
-        return NodePath(GeomNode('mountain')).copyTo(NodePath('m'))
     
     @staticmethod
     def _create_runway():
@@ -333,25 +208,18 @@ class TerrainGenerator:
     
     @staticmethod
     def _create_buildings():
-        """Binalar"""
+        """Binalar (MapData'dan)"""
+        from src.simulation.map_data import WorldMap
+        
         root = NodePath("buildings")
         
-        # Bina konumları ve boyutları
-        building_data = [
-            # Kontrol kulesi
-            (600, 450, 0, 8, 8, 25, (0.5, 0.5, 0.55, 1)),
-            # Hangarlar
-            (650, 520, 0, 40, 25, 12, (0.6, 0.55, 0.5, 1)),
-            (650, 560, 0, 40, 25, 12, (0.55, 0.5, 0.45, 1)),
-            # Depolar
-            (700, 480, 0, 20, 15, 8, (0.5, 0.45, 0.4, 1)),
-            (720, 520, 0, 15, 15, 6, (0.45, 0.4, 0.38, 1)),
-        ]
-        
-        for x, y, z, w, d, h, c in building_data:
-            building = TerrainGenerator._create_box_building(w, d, h, c)
-            building.reparentTo(root)
-            building.setPos(x, y, z)
+        for obj in WorldMap.STATIC_OBJECTS:
+            if obj.obj_type == "building":
+                w, d, h = obj.size
+                c = obj.color
+                building = TerrainGenerator._create_box_building(w, d, h, c)
+                building.reparentTo(root)
+                building.setPos(*obj.position)
             
         return root
     
@@ -402,96 +270,3 @@ class TerrainGenerator:
         
         return NodePath(GeomNode('building')).copyTo(NodePath('b'))
     
-    @staticmethod
-    def _create_trees():
-        """Ağaçlar"""
-        root = NodePath("trees")
-        
-        np.random.seed(42)
-        
-        # Rastgele ağaç konumları (pistden uzakta)
-        for _ in range(100):
-            x = np.random.uniform(-800, 1200)
-            y = np.random.uniform(-800, 1200)
-            
-            # Pist ve bina alanını atla
-            if 200 < x < 800 and 300 < y < 700:
-                continue
-                
-            scale = np.random.uniform(0.7, 1.3)
-            tree = TerrainGenerator._create_simple_tree(scale)
-            tree.reparentTo(root)
-            tree.setPos(x, y, 0)
-            
-        return root
-    
-    @staticmethod
-    def _create_simple_tree(scale=1.0):
-        """Basit ağaç (koni + silindir)"""
-        root = NodePath("tree")
-        
-        format = GeomVertexFormat.get_v3n3c4()
-        
-        # Gövde
-        trunk_vdata = GeomVertexData('trunk', format, Geom.UHStatic)
-        tv = GeomVertexWriter(trunk_vdata, 'vertex')
-        tn = GeomVertexWriter(trunk_vdata, 'normal')
-        tc = GeomVertexWriter(trunk_vdata, 'color')
-        
-        trunk_color = (0.4, 0.25, 0.15, 1)
-        trunk_h = 3 * scale
-        trunk_r = 0.3 * scale
-        
-        for h in [0, trunk_h]:
-            for i in range(8):
-                angle = 2 * np.pi * i / 8
-                tv.addData3(trunk_r * np.cos(angle), trunk_r * np.sin(angle), h)
-                tn.addData3(np.cos(angle), np.sin(angle), 0)
-                tc.addData4(*trunk_color)
-        
-        trunk_prim = GeomTriangles(Geom.UHStatic)
-        for i in range(8):
-            trunk_prim.addVertices(i, (i+1)%8, 8+i)
-            trunk_prim.addVertices((i+1)%8, 8+(i+1)%8, 8+i)
-        trunk_prim.closePrimitive()
-        
-        trunk_geom = Geom(trunk_vdata)
-        trunk_geom.addPrimitive(trunk_prim)
-        trunk_np = NodePath(GeomNode('trunk'))
-        trunk_np.node().addGeom(trunk_geom)
-        trunk_np.reparentTo(root)
-        
-        # Yapraklar (koni)
-        leaf_vdata = GeomVertexData('leaves', format, Geom.UHStatic)
-        lv = GeomVertexWriter(leaf_vdata, 'vertex')
-        ln = GeomVertexWriter(leaf_vdata, 'normal')
-        lc = GeomVertexWriter(leaf_vdata, 'color')
-        
-        leaf_color = (0.15, 0.45, 0.2, 1)
-        leaf_h = 6 * scale
-        leaf_r = 2 * scale
-        
-        # Tepe noktası
-        lv.addData3(0, 0, trunk_h + leaf_h)
-        ln.addData3(0, 0, 1)
-        lc.addData4(*leaf_color)
-        
-        # Taban
-        for i in range(12):
-            angle = 2 * np.pi * i / 12
-            lv.addData3(leaf_r * np.cos(angle), leaf_r * np.sin(angle), trunk_h)
-            ln.addData3(np.cos(angle), np.sin(angle), 0.3)
-            lc.addData4(*leaf_color)
-        
-        leaf_prim = GeomTriangles(Geom.UHStatic)
-        for i in range(12):
-            leaf_prim.addVertices(0, 1+i, 1+(i+1)%12)
-        leaf_prim.closePrimitive()
-        
-        leaf_geom = Geom(leaf_vdata)
-        leaf_geom.addPrimitive(leaf_prim)
-        leaf_np = NodePath(GeomNode('leaves'))
-        leaf_np.node().addGeom(leaf_geom)
-        leaf_np.reparentTo(root)
-        
-        return root

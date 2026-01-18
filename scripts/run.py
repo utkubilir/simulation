@@ -144,7 +144,6 @@ class SimulationRunner:
 
             ui_config = config.get('ui', {})
             if ui_config.get('gl_view', False) or ui_config.get('gl_view_inset', False):
-            if config.get('ui', {}).get('gl_view', False):
                 try:
                     from src.simulation.gl_world_viewer import GLWorldViewer
                     arena_config = self.config.get('arena', {
@@ -705,7 +704,6 @@ class SimulationRunner:
             is_paused=self.world.is_paused,
             gl_frame=gl_frame,
             inset_frame=inset_frame
-            gl_frame=gl_frame
         )
 
 

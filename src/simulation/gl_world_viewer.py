@@ -108,6 +108,7 @@ class GLWorldViewer:
 
             self.renderer.render_aircraft(
                 position=gl_pos,
+                position=pos,
                 heading=yaw,
                 roll=roll,
                 pitch=pitch,

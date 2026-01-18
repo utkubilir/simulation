@@ -1,25 +1,15 @@
 import pygame
 import math
 import numpy as np
+from src.simulation.ui.theme import Colors, Fonts
+from src.simulation.ui.widgets import Radar, VerticalTape, ProgressBar
 
 class HUD:
     """
     Head-Up Display / Primary Flight Display (PFD)
     
-    Provides:
-    - Artificial Horizon (Pitch/Roll)
-    - Bank Indicator
-    - Speed & Altitude Tapes (Optional overlays)
-    - Compass Strip (Optional)
+    Modernized to use 'Tactical Glass' theme and widgets.
     """
-    
-    # Colors
-    COLOR_SKY = (0, 120, 200)       # Sky Blue
-    COLOR_GROUND = (116, 92, 48)    # Earth Brown
-    COLOR_LINE = (255, 255, 255)    # White
-    COLOR_TEXT = (255, 255, 255)    # White
-    COLOR_BG_TAPE = (40, 40, 40, 180) # Semi-transparent gray
-    COLOR_REF = (255, 255, 0)       # Yellow Aircraft Reference
     
     def __init__(self, width: int, height: int):
         self.width = width
@@ -29,20 +19,59 @@ class HUD:
         
         self.font = None
         self.font_large = None
+        self.font_small = None
         
         # Horizon scaling
         self.pixels_per_degree = height / 60.0 # 60 degrees visible vertically
         
+        # Initialize Widgets
+        # Speed Tape (Left)
+        tape_w, tape_h = 60, 300
+        self.spd_tape = VerticalTape(
+            x=50,
+            y=self.center_y - tape_h//2,
+            width=tape_w,
+            height=tape_h,
+            min_val=0, max_val=200, current_val=0, step=10, label="SPD"
+        )
+
+        # Altitude Tape (Right)
+        self.alt_tape = VerticalTape(
+            x=width - 50 - tape_w,
+            y=self.center_y - tape_h//2,
+            width=tape_w,
+            height=tape_h,
+            min_val=0, max_val=2000, current_val=0, step=50, label="ALT"
+        )
+
+        # Throttle Bar (Bottom Left)
+        self.throttle_bar = ProgressBar(
+            x=50,
+            y=height - 50,
+            width=200,
+            height=20,
+            label="THROTTLE",
+            color=Colors.PRIMARY
+        )
+
+        # Radar (Bottom Right)
+        self.radar = Radar(
+            x=width - 220,
+            y=height - 220,
+            radius=100
+        )
+
     def init(self):
         """Initialize fonts (must be called after pygame.init)"""
         if not pygame.font.get_init():
              pygame.font.init()
         self.font = pygame.font.Font(None, 24)
         self.font_large = pygame.font.Font(None, 36)
+        self.font_small = pygame.font.Font(None, 18)
         
     def render(self, surface: pygame.Surface, uav_state: dict, 
                detections: list = None, lock_state: dict = None,
-               ui_mode = None):
+               ui_mode = None, world_state: dict = None):
         """
         Render HUD elements.
         
@@ -51,6 +80,7 @@ class HUD:
             detections: list of detection dicts (optional)
             lock_state: dict of lock status (optional)
             ui_mode: UI mode enum (optional, for mode-specific rendering)
+            world_state: World state dict (optional, for Radar)
         """
         # Extract state
         orientation = uav_state.get('orientation', [0.0, 0.0, 0.0])
@@ -67,8 +97,13 @@ class HUD:
         pos = uav_state.get('position', np.zeros(3))
         alt = pos[2]
         
-        # 1. Artificial Horizon
-        self._draw_horizon(surface, pitch, roll)
+        # Update Widgets
+        self.spd_tape.update(vel)
+        self.alt_tape.update(alt)
+        self.throttle_bar.value = uav_state.get('throttle', 0.5)
+
+        # 1. Artificial Horizon (Lines Only)
+        self._draw_horizon_line(surface, pitch, roll)
         
         # 2. Pitch Ladder
         self._draw_pitch_ladder(surface, pitch, roll)
@@ -80,30 +115,83 @@ class HUD:
         if detections:
             self._draw_detections(surface, detections, lock_state)
             
-        # 5. Aircraft Reference (Fixed)
-        self._draw_aircraft_ref(surface)
+        # 5. Crosshair (Center)
+        self._draw_crosshair(surface, lock_state)
+
+        # 6. Widgets
+        self.spd_tape.render(surface, self.font)
+        self.alt_tape.render(surface, self.font)
+        self.throttle_bar.render(surface, self.font_small)
         
-        # 6. Speed Tape (Left)
-        self._draw_tape(surface, 'speed', vel, 
-                       x=0, y=self.height//2 - 150, w=70, h=300, 
-                       step=10, pixel_step=5)
-                       
-        # 7. Altitude Tape (Right)
-        self._draw_tape(surface, 'alt', alt, 
-                       x=self.width-70, y=self.height//2 - 150, w=70, h=300, 
-                       step=50, pixel_step=2)
-                       
-        # 8. Heading Strip (Top)
+        # 7. Radar
+        if world_state:
+            self._render_radar(surface, uav_state, world_state, lock_state)
+
+        # 8. Heading Strip
         self._draw_heading_strip(surface, heading)
+
+    def _render_radar(self, surface, uav_state, world_state, lock_state):
+        radar_targets = []
+        player_pos = np.array(uav_state.get('position', [0,0,0]))
+        player_heading = uav_state.get('heading', 0)
+
+        # HUD Radar is usually "Heading Up" (Forward is Up)
+        heading_rad = math.radians(player_heading)
+        c = math.cos(-heading_rad)
+        s = math.sin(-heading_rad)
+
+        current_id = uav_state.get('id')
+
+        for uid, uav in world_state.get('uavs', {}).items():
+            if uid == current_id: continue
+
+            pos = np.array(uav.get('position', [0,0,0]))
+            rel = pos - player_pos
+
+            # Rotate to body frame (X=Forward, Y=Right, Z=Down)
+            # In simulation coords: X=East, Y=North.
+            # Heading 0 = East.
+            # Body X (Forward) = East.
+            # Body Y (Left) = North.
+            # Wait. If X=East, Y=North.
+            # Vector (1, 0) is East. (0, 1) is North.
+            # Rotation by -heading:
+            # If heading=0: bx=rx, by=ry.
+            # If heading=90 (North): c=0, s=-1.
+            # rel = (0, 1) [Target North].
+            # bx = 0*0 - 1*(-1) = 1. (Forward). Correct.
+            # by = 0*(-1) + 1*0 = 0.
+
+            bx = rel[0]*c - rel[1]*s
+            by = rel[0]*s + rel[1]*c
+
+            # Radar widget expects 'rel_pos': [x, y]
+            # My logic in Renderer2D says:
+            # heading_up logic in Radar:
+            # sx = center + ry*scale (Right is X)
+            # sy = center - rx*scale (Forward is Y up)
+            # So if I pass [bx, -by],
+            # sx = center - by*scale.
+            # sy = center - bx*scale.
+            # If bx is forward, sy is Up. Correct.
+            # If by is Left (positive Y in Sim?), then -by is Right?
+            # In Sim: Y is North (Left of East). So +Y is Left.
+            # So -by is Right.
+            # So passing [bx, -by] makes sense if Radar expects [forward, right].
+            # Let's check Renderer2D again.
+            # Renderer2D: rel_pos = [bx, -by].
+
+            radar_targets.append({
+                'rel_pos': [bx, -by],
+                'type': 'enemy' if 'target' in uid else 'friend',
+                'locked': (lock_state.get('target_id') == uid) if lock_state else False
+            })
+
+        self.radar.render(surface, radar_targets, player_heading, 60, heading_up=True)
 
     def _draw_detections(self, surface, detections, lock_state):
         """Draw Augmented Reality bounding boxes"""
         locked_id = lock_state.get('target_id') if lock_state else None
-        
-        # Assuming detections have 'bbox' [x1, y1, x2, y2] normalized? 
-        # Or pixel coords for the camera frame?
-        # SimulationDetector usually returns pixel coords for the generated frame (640x480).
-        # We need to scale them to current HUD/screen size.
         
         # Default camera size
         cam_w, cam_h = 640, 480
@@ -123,7 +211,7 @@ class HUD:
             
             # Determine Color
             is_locked = (det.get('world_id') == locked_id)
-            color = (255, 0, 0) if is_locked else (255, 255, 0)
+            color = Colors.DANGER if is_locked else Colors.WARNING
             thickness = 3 if is_locked else 1
             
             # Draw Bracket Corners (Sci-Fi style)
@@ -148,48 +236,72 @@ class HUD:
             txt = self.font.render(s_txt, True, color)
             surface.blit(txt, (x1, y1 - 20))
 
-    def _draw_horizon(self, surface, pitch, roll):
-        """Rotating horizon background"""
+    def _draw_crosshair(self, surface, lock_state):
+        """Draw central crosshair and lock status"""
+        cx, cy = self.center_x, self.center_y
+
+        is_locked = lock_state.get('is_locked') if lock_state else False
+        color = Colors.DANGER if is_locked else Colors.HUD_LINE
+
+        # Gap center
+        gap = 10
+        len_ = 20
+
+        pygame.draw.line(surface, color, (cx - gap - len_, cy), (cx - gap, cy), 2)
+        pygame.draw.line(surface, color, (cx + gap, cy), (cx + gap + len_, cy), 2)
+        pygame.draw.line(surface, color, (cx, cy - gap - len_), (cx, cy - gap), 2)
+        pygame.draw.line(surface, color, (cx, cy + gap), (cx, cy + gap + len_), 2)
+
+        # Center dot
+        pygame.draw.circle(surface, color, (cx, cy), 2)
+
+        # Lock Arc/Text
+        if lock_state and lock_state.get('target_id'):
+            prog = lock_state.get('progress', 0)
+            state = lock_state.get('state', 'IDLE')
+
+            # Arc
+            if prog > 0:
+                rect = pygame.Rect(0, 0, 80, 80)
+                rect.center = (cx, cy)
+                arc_col = Colors.WARNING if prog < 1.0 else Colors.DANGER
+                pygame.draw.arc(surface, arc_col, rect, 0, math.pi * 2 * prog, 3)
+
+            # Text
+            text = ""
+            if state == 'LOCKING':
+                text = "LOCKING..."
+                col = Colors.WARNING
+            elif state == 'SUCCESS':
+                text = "SHOOT"
+                col = Colors.SUCCESS
+
+            if text:
+                lbl = self.font_large.render(text, True, col)
+                surface.blit(lbl, (cx - lbl.get_width()//2, cy - 100))
+
+    def _draw_horizon_line(self, surface, pitch, roll):
+        """Draw just the horizon line"""
         pitch_deg = math.degrees(pitch)
         pitch_offset = pitch_deg * self.pixels_per_degree
         
-        # Huge diagonal size
         diag = math.sqrt(self.width**2 + self.height**2)
         radius = diag
         
         sin_r = math.sin(roll)
         cos_r = math.cos(roll)
         
-        # Center of horizon line
         cx = self.center_x + pitch_offset * sin_r
         cy = self.center_y + pitch_offset * cos_r
         
-        # Horizon Line vector
         dx = radius * cos_r
         dy = -radius * sin_r
         
         p1 = (cx - dx, cy - dy)
         p2 = (cx + dx, cy + dy)
         
-        # Sky Polygon (perpendicular up)
-        up_x = sin_r * radius
-        up_y = cos_r * radius
-        
-        sky_poly = [
-            p1, p2, 
-            (p2[0] - up_x, p2[1] - up_y),
-            (p1[0] - up_x, p1[1] - up_y)
-        ]
-        
-        ground_poly = [
-            p1, p2,
-            (p2[0] + up_x, p2[1] + up_y),
-            (p1[0] + up_x, p1[1] + up_y)
-        ]
-        
-        pygame.draw.polygon(surface, self.COLOR_SKY, sky_poly)
-        pygame.draw.polygon(surface, self.COLOR_GROUND, ground_poly)
-        pygame.draw.line(surface, self.COLOR_LINE, p1, p2, 2)
+        # Draw Line
+        pygame.draw.line(surface, Colors.HUD_LINE, p1, p2, 2)
 
     def _draw_pitch_ladder(self, surface, pitch, roll):
         """Pitch ladder lines"""
@@ -205,18 +317,10 @@ class HUD:
         for p in range(int(start_p), int(end_p) + 5, 5):
             if p == 0: continue
             
-            # Pixel distance from center
-            # if p > pitch, line is ABOVE
-            # screen Y is down positive.
-            # dist_y = -(p - pitch) * scale
-            
-            dist_angle = pitch_deg - p # Positive if pitch > p (we are looking up, line is below)
-            # Wait, if pitch=10, line 0 is below center. (10-0)=10 deg down.
-            
+            dist_angle = pitch_deg - p
             dist_px = dist_angle * self.pixels_per_degree
             
             # Rotate this offsets
-            # center offset (0, dist_px) rotated by -roll
             rcx = self.center_x + dist_px * sin_r
             rcy = self.center_y + dist_px * cos_r
             
@@ -227,14 +331,13 @@ class HUD:
             start = (rcx - dx, rcy - dy)
             end = (rcx + dx, rcy + dy)
             
-            # Check bounds roughly
             if not (0 <= rcx <= self.width and 0 <= rcy <= self.height):
                 continue
                 
-            pygame.draw.line(surface, self.COLOR_LINE, start, end, 2)
+            pygame.draw.line(surface, Colors.HUD_LINE, start, end, 2)
             
             if p % 10 == 0:
-                text = self.font.render(str(abs(p)), True, self.COLOR_LINE)
+                text = self.font.render(str(abs(p)), True, Colors.HUD_LINE)
                 surface.blit(text, (end[0] + 5, end[1] - 8))
 
     def _draw_bank_indicator(self, surface, roll):
@@ -244,7 +347,6 @@ class HUD:
         
         # Scale range: +/- 60 deg
         for angle in [0, 10, 20, 30, 45, 60, -10, -20, -30, -45, -60]:
-            # Scale moves with roll
             rad = math.radians(angle - 90) - roll
             
             x1 = cx + radius * math.cos(rad)
@@ -253,7 +355,7 @@ class HUD:
             y2 = cy + (radius + 10) * math.sin(rad)
             
             w = 3 if angle == 0 else 2
-            pygame.draw.line(surface, self.COLOR_LINE, (x1, y1), (x2, y2), w)
+            pygame.draw.line(surface, Colors.HUD_LINE, (x1, y1), (x2, y2), w)
             
         # Fixed Triangle
         tri_pts = [
@@ -261,68 +363,7 @@ class HUD:
             (cx - 6, cy - radius + 20),
             (cx + 6, cy - radius + 20)
         ]
-        pygame.draw.polygon(surface, self.COLOR_REF, tri_pts)
-
-    def _draw_aircraft_ref(self, surface):
-        """Fixed aircraft symbol"""
-        cx, cy = self.center_x, self.center_y
-        
-        # Left Wing
-        pygame.draw.rect(surface, (0,0,0), (cx - 102, cy - 2, 74, 8)) # Outline
-        pygame.draw.rect(surface, self.COLOR_REF, (cx - 100, cy, 70, 4))
-        
-        # Right Wing
-        pygame.draw.rect(surface, (0,0,0), (cx + 28, cy - 2, 74, 8)) # Outline
-        pygame.draw.rect(surface, self.COLOR_REF, (cx + 30, cy, 70, 4))
-        
-        # Center Dot
-        pygame.draw.rect(surface, (0,0,0), (cx - 5, cy - 5, 10, 10))
-        pygame.draw.rect(surface, self.COLOR_REF, (cx - 3, cy - 3, 6, 6))
-
-    def _draw_tape(self, surface, type_, value, x, y, w, h, step, pixel_step):
-        """Scrolling tape for Speed/Alt"""
-        bg = pygame.Surface((w, h), pygame.SRCALPHA)
-        bg.fill(self.COLOR_BG_TAPE)
-        surface.blit(bg, (x, y))
-        
-        # Border
-        pygame.draw.rect(surface, self.COLOR_LINE, (x, y, w, h), 1)
-        
-        # Center line marker
-        cy = y + h // 2
-        
-        # Range of values to draw
-        # value is at cy
-        # delta_y = (val - value) * pixel_step
-        # visible if -h/2 < delta_y < h/2
-        
-        start_val = int(value - (h/2)/pixel_step)
-        end_val = int(value + (h/2)/pixel_step)
-        
-        # Snap to step
-        start_val = (start_val // step) * step
-        
-        for v in range(start_val, end_val + step, step):
-            dy = (value - v) * pixel_step
-            line_y = cy + dy
-            
-            if y <= line_y <= y+h:
-                pygame.draw.line(surface, self.COLOR_LINE, (x, line_y), (x+15, line_y), 2)
-                text = self.font.render(str(v), True, self.COLOR_LINE)
-                surface.blit(text, (x + 20, line_y - 8))
-                
-        # Current Value Box
-        box_h = 30
-        pygame.draw.rect(surface, (0,0,0), (x, cy - box_h//2, w, box_h))
-        pygame.draw.rect(surface, self.COLOR_LINE, (x, cy - box_h//2, w, box_h), 2)
-        
-        lbl = self.font_large.render(f"{value:.0f}", True, self.COLOR_REF)
-        surface.blit(lbl, (x + 10, cy - 10))
-        
-        # Label
-        tag = "SPD" if type_ == 'speed' else "ALT"
-        lbl = self.font.render(tag, True, self.COLOR_TEXT)
-        surface.blit(lbl, (x, y - 20))
+        pygame.draw.polygon(surface, Colors.WARNING, tri_pts)
 
     def _draw_heading_strip(self, surface, heading):
         """Top heading strip"""
@@ -330,16 +371,15 @@ class HUD:
         x = (self.width - w) // 2
         y = 10
         
+        # Transparent BG
         bg = pygame.Surface((w, h), pygame.SRCALPHA)
-        bg.fill(self.COLOR_BG_TAPE)
+        bg.fill((20, 20, 20, 150))
         surface.blit(bg, (x, y))
         
-        pygame.draw.rect(surface, self.COLOR_LINE, (x, y, w, h), 1)
+        pygame.draw.rect(surface, Colors.HUD_LINE, (x, y, w, h), 1)
         
-        # Heading is 0..360
-        # Visible range +/- 30 deg
         cx = x + w // 2
-        pixels_per_deg = w / 60.0 # 60 degrees visible
+        pixels_per_deg = w / 60.0
         
         min_h = int(heading - 35)
         max_h = int(heading + 35)
@@ -352,7 +392,7 @@ class HUD:
                 lx = cx + dx
                 
                 if x <= lx <= x+w:
-                    pygame.draw.line(surface, self.COLOR_LINE, (lx, y+h-10), (lx, y+h), 2)
+                    pygame.draw.line(surface, Colors.HUD_LINE, (lx, y+h-10), (lx, y+h), 2)
                     
                     if h_norm % 90 == 0:
                         dirs = {0: 'N', 90: 'E', 180: 'S', 270: 'W'}
@@ -360,20 +400,19 @@ class HUD:
                     else:
                         txt = str(h_norm // 10)
                         
-                    lbl = self.font.render(txt, True, self.COLOR_LINE)
+                    lbl = self.font.render(txt, True, Colors.HUD_LINE)
                     surface.blit(lbl, (lx - 6, y+5))
             elif h_val % 5 == 0:
                 dx = (h_val - heading) * pixels_per_deg
                 lx = cx + dx
                 if x <= lx <= x+w:
-                    pygame.draw.line(surface, self.COLOR_LINE, (lx, y+h-5), (lx, y+h), 1)
+                    pygame.draw.line(surface, Colors.HUD_LINE, (lx, y+h-5), (lx, y+h), 1)
                     
         # Center Marker
-        pygame.draw.polygon(surface, self.COLOR_REF, [
+        pygame.draw.polygon(surface, Colors.WARNING, [
             (cx, y+h+5), (cx-5, y+h+15), (cx+5, y+h+15)
         ])
         
         # Box
-        lbl = self.font_large.render(f"{heading:.0f}°", True, self.COLOR_REF)
+        lbl = self.font_large.render(f"{heading:.0f}°", True, Colors.WARNING)
         surface.blit(lbl, (cx - 20, y + h + 20))
-

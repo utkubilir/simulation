@@ -106,7 +106,7 @@ class Renderer:
                 hud_uav = next((u for u in world_state.get('uavs', {}).values() if u.get('is_player')), None)
                 
             if hud_uav:
-                self.hud.render(screen, hud_uav, detections, lock_state, self.ui_mode)
+                self.hud.render(screen, hud_uav, detections, lock_state, self.ui_mode, world_state=world_state)
             
             # 3. Simple Status Text
             font = self.map_renderer.font_small

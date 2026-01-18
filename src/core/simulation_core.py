@@ -102,11 +102,14 @@ class SimulationCore:
             'time_scale': 1.0
         })
         
-        self.camera = SimulatedCamera({
-            'fov': config.camera_fov,
-            'resolution': list(config.camera_resolution),
-            'fps': config.perception_fps
-        })
+        self.camera = SimulatedCamera(
+            position=config.own_position,
+            config={
+                'fov': config.camera_fov,
+                'resolution': list(config.camera_resolution),
+                'fps': config.perception_fps
+            }
+        )
         
         # Pass seeded RNG to detector for determinism
         self.detector = SimulationDetector(rng=self.rng)
@@ -525,7 +528,7 @@ class SimulationCore:
             scenario=self.config.scenario,
             own_state=own_state,
             targets=targets,
-            detections=[d.copy() if isinstance(d, dict) else d for d in self._last_detections],
+            detections=list(self._last_detections),
             tracks=[{'id': t.id, 'bbox': t.bbox, 'age': t.age} 
                     for t in self._last_tracks] if self._last_tracks else [],
             lock=lock_dict,

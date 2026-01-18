@@ -19,6 +19,27 @@ Gimbal YOK - Kamera İHA'nın burnuna sabit monte edilmiş.
 import numpy as np
 from typing import Tuple, Optional, List, Dict
 import cv2
+import functools
+
+@functools.lru_cache(maxsize=128)
+def get_motion_blur_kernel(blur_size: int, angle_rad_quantized: float) -> np.ndarray:
+    """
+    Cached motion blur kernel generation.
+    angle_rad_quantized is expected to be rounded (e.g. to 2 decimal places)
+    to maximize cache hits.
+    """
+    kernel = np.zeros((blur_size, blur_size), dtype=np.float32)
+
+    mid = blur_size // 2
+    for i in range(blur_size):
+        x = int(mid + (i - mid) * np.cos(angle_rad_quantized))
+        y = int(mid + (i - mid) * np.sin(angle_rad_quantized))
+        if 0 <= x < blur_size and 0 <= y < blur_size:
+            kernel[y, x] = 1.0
+
+    kernel /= np.sum(kernel) if np.sum(kernel) > 0 else 1
+    return kernel
+
 
 try:
     from opensimplex import OpenSimplex
@@ -1375,21 +1396,16 @@ class FixedCamera:
         blur_size = max(3, blur_size if blur_size % 2 == 1 else blur_size + 1)
         
         # Motion blur kernel
-        kernel = np.zeros((blur_size, blur_size), dtype=np.float32)
-        
         if image_speed > 0.1:
             angle = np.arctan2(image_vel[1], image_vel[0])
         else:
-            angle = 0
+            angle = 0.0
             
-        mid = blur_size // 2
-        for i in range(blur_size):
-            x = int(mid + (i - mid) * np.cos(angle))
-            y = int(mid + (i - mid) * np.sin(angle))
-            if 0 <= x < blur_size and 0 <= y < blur_size:
-                kernel[y, x] = 1.0
-                
-        kernel /= np.sum(kernel) if np.sum(kernel) > 0 else 1
+        # Round angle to increase cache hits (resolution ~0.6 degrees)
+        angle_quantized = round(float(angle), 2)
+
+        # Get cached kernel
+        kernel = get_motion_blur_kernel(blur_size, angle_quantized)
         
         blurred = cv2.filter2D(frame, -1, kernel)
         

@@ -102,14 +102,11 @@ class SimulationCore:
             'time_scale': 1.0
         })
         
-        self.camera = SimulatedCamera(
-            position=config.own_position,
-            config={
-                'fov': config.camera_fov,
-                'resolution': list(config.camera_resolution),
-                'fps': config.perception_fps
-            }
-        )
+        self.camera = SimulatedCamera([0, 0, 0], {
+            'fov': config.camera_fov,
+            'resolution': list(config.camera_resolution),
+            'fps': config.perception_fps
+        })
         
         # Pass seeded RNG to detector for determinism
         self.detector = SimulationDetector(rng=self.rng)

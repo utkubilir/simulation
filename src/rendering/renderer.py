@@ -375,13 +375,20 @@ class GLRenderer:
         # Environment referansını sakla
         self.environment = environment
         
-        # Chunk rendering için callback'leri kaydet
-        if hasattr(environment, 'chunk_manager'):
+        if hasattr(environment.chunk_manager, 'add_callbacks'):
+            environment.chunk_manager.add_callbacks(
+                on_load=self._on_chunk_loaded,
+                on_unload=self._on_chunk_unloaded
+            )
+        else:
             environment.chunk_manager.on_chunk_loaded = self._on_chunk_loaded
             environment.chunk_manager.on_chunk_unloaded = self._on_chunk_unloaded
-            self._chunk_vaos = {}  # {coords: vao}
-            self._chunk_vbos = {}  # {coords: vbo}
-            self._chunk_vbos = {}  # {coords: vbo}
+        
+        self._chunk_vaos = {}  # {coords: vao}
+        self._chunk_shadow_vaos = {} # {coords: vao_shadow}
+        self._chunk_vbos = {}  # {coords: vbo}
+
+
     
     def _on_chunk_loaded(self, chunk):
         """Yeni chunk yüklendiğinde VAO oluştur"""
@@ -409,25 +416,25 @@ class GLRenderer:
         vao_shadow = self.ctx.vertex_array(self.prog_shadow, [
             (vbo, '3f 20x', 'in_position')
         ])
-        chunk.vao_shadow = vao_shadow
-        chunk.vao = vao
+        
+        self._chunk_shadow_vaos[chunk.coords] = vao_shadow
         chunk.vertex_count = len(mesh) // 6
     
     def _on_chunk_unloaded(self, chunk):
         """Chunk kaldırıldığında GPU kaynaklarını temizle"""
         coords = chunk.coords
+        
         if coords in self._chunk_vaos:
             self._chunk_vaos[coords].release()
             del self._chunk_vaos[coords]
             
-        if hasattr(chunk, 'vao_shadow') and chunk.vao_shadow:
-            chunk.vao_shadow.release()
-            chunk.vao_shadow = None
+        if coords in self._chunk_shadow_vaos:
+            self._chunk_shadow_vaos[coords].release()
+            del self._chunk_shadow_vaos[coords]
             
         if coords in self._chunk_vbos:
             self._chunk_vbos[coords].release()
             del self._chunk_vbos[coords]
-        chunk.vao = None
     
     def render_terrain_chunks(self, program=None):
         """Sonsuz dünya: Görünür chunk'ları render et"""
@@ -441,7 +448,9 @@ class GLRenderer:
         prog = program if program else self.prog_terrain
         
         for chunk in chunks:
-            if not chunk.vao:
+            # Check local VAO storage
+            vao = self._chunk_vaos.get(chunk.coords)
+            if not vao:
                 continue
             
             # Her chunk için model matrisi
@@ -525,10 +534,12 @@ class GLRenderer:
                     prog['viewPos'].value = tuple(self.camera.position)
             
             # Select proper VAO
-            if program == self.prog_shadow and hasattr(chunk, 'vao_shadow') and chunk.vao_shadow:
-                chunk.vao_shadow.render()
+            if program == self.prog_shadow:
+                vao_shadow = self._chunk_shadow_vaos.get(chunk.coords)
+                if vao_shadow:
+                    vao_shadow.render()
             else:
-                chunk.vao.render(prog if program else None)
+                vao.render(prog if program else None)
         
     def _init_object_meshes(self):
         """Object mesh'lerini oluştur (building, tree)"""

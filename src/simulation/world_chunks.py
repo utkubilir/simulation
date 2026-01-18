@@ -79,10 +79,19 @@ class ChunkManager:
         # Son güncellenen merkez chunk
         self._last_center: Optional[Tuple[int, int]] = None
         
-        # Callback: Yeni chunk yüklendiğinde çağrılır (renderer için)
-        self.on_chunk_loaded = None
-        self.on_chunk_unloaded = None
-    
+        # Callback listeleri: [(cx, cy): TerrainChunk] -> None
+        self._on_load_callbacks = []
+        self._on_unload_callbacks = []
+        
+    def add_callbacks(self, on_load=None, on_unload=None):
+        """Renderer callbacklerini ekle"""
+        if on_load:
+            self._on_load_callbacks.append(on_load)
+        if on_unload:
+            self._on_unload_callbacks.append(on_unload)
+
+    # ... (Properties omitted)
+
     def get_chunk_coords(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Dünya koordinatlarından chunk koordinatlarına dönüşüm"""
         return (
@@ -91,19 +100,15 @@ class ChunkManager:
         )
     
     def update(self, player_x: float, player_y: float) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]]]:
-        """
-        Oyuncu pozisyonuna göre chunk'ları güncelle.
-        
-        Args:
-            player_x, player_y: Oyuncu dünya koordinatları
-            
-        Returns:
-            (yeni_yüklenen, kaldırılan) chunk koordinatları
-        """
+        """Oyuncu pozisyonuna göre chunk'ları güncelle."""
         center = self.get_chunk_coords(player_x, player_y)
         
         # Merkez değişmediyse bir şey yapma
         if center == self._last_center:
+            # DEBUG: if first update ever
+            if not getattr(self, '_first_update_done', False):
+                # print(f"🌍 ChunkManager: First update check skipped (No movement). Center: {center}")
+                self._first_update_done = True
             return set(), set()
         
         self._last_center = center
@@ -114,18 +119,21 @@ class ChunkManager:
         
         # Yeni chunk'ları yükle
         to_load = required - current
+        # if to_load:
+        #    print(f"📥 Loading {len(to_load)} chunks...")
+            
         for coords in to_load:
             chunk = self._generate_chunk(coords)
             self.loaded_chunks[coords] = chunk
-            if self.on_chunk_loaded:
-                self.on_chunk_loaded(chunk)
-        
+            for callback in self._on_load_callbacks:
+                callback(chunk)
+                
         # Uzaktaki chunk'ları kaldır
         to_unload = current - required
         for coords in to_unload:
             chunk = self.loaded_chunks.pop(coords)
-            if self.on_chunk_unloaded:
-                self.on_chunk_unloaded(chunk)
+            for callback in self._on_unload_callbacks:
+                callback(chunk)
         
         return to_load, to_unload
     

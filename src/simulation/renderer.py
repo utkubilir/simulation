@@ -57,8 +57,6 @@ class Renderer:
             if e['type'] == 'keydown':
                 if e['key'] == 'tab':
                     self.show_cockpit = not self.show_cockpit
-                elif e['key'] == 'g':
-                    self.show_gl_world = not self.show_gl_world
                 elif e['key'] == '[':
                     e['cmd'] = 'prev_uav'
                 elif e['key'] == ']':
@@ -134,7 +132,7 @@ class Renderer:
             )
             screen.blit(txt, (10, 10))
             help_txt = font.render(
-                "TAB: Cockpit View | G: 2D Map | SPACE: Pause | R: Restart",
+                "TAB: Cockpit View | SPACE: Pause | R: Restart",
                 True,
                 (220, 220, 220),
             )
@@ -155,7 +153,7 @@ class Renderer:
             # Help text
             font = self.map_renderer.font_small
             txt = font.render(
-                f"TAB: Cockpit View | G: 3D World | SPACE: Pause | R: Restart | {target_text}",
+                f"TAB: Cockpit View | SPACE: Pause | R: Restart | {target_text}",
                 True,
                 (200, 200, 200),
             )

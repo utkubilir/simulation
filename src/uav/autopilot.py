@@ -453,10 +453,7 @@ class Autopilot:
         if mode == 'waypoint':
             waypoints = params.get('waypoints', [])
             if waypoints:
-                # Sadece waypointler değiştiyse güncelle
-                # (Optimize edilebilir, şimdilik her seferinde set ediyoruz)
-                # Waypoint check logic inside combat manager creates stable waypoints
-                # Check if we need to reset waypoints
+                # Only update if waypoints have changed to avoid resetting index
                 current_wps = [w.position.tolist() for w in self.waypoints]
                 if not current_wps or current_wps != waypoints:
                     self.set_waypoints(waypoints)

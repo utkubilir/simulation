@@ -217,6 +217,29 @@ class SimulationRunner:
         # Load air defense zones from scenario
         if 'air_defense' in self.config:
             self.air_defense.load_from_scenario(self.config)
+
+    def _init_gl_viewer(self, ui_config: dict):
+        if not (ui_config.get('gl_view', False) or ui_config.get('gl_view_inset', False)):
+            return
+
+        try:
+            from src.simulation.gl_world_viewer import GLWorldViewer
+
+            arena_config = self.config.get('arena', {
+                'width': 500.0,
+                'depth': 500.0,
+                'min_altitude': 10.0,
+                'max_altitude': 150.0,
+                'safe_zone_size': 50.0
+            })
+            self.gl_viewer = GLWorldViewer(
+                width=self.renderer.width,
+                height=self.renderer.height,
+                world=self.world,
+                arena_config=arena_config
+            )
+        except Exception as exc:
+            print(f"⚠️ GL World Viewer devre dışı: {exc}")
         
     def setup_scenario(self, scenario_config: dict = None):
         """Setup scenario from config"""

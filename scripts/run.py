@@ -143,7 +143,25 @@ class SimulationRunner:
             self.autopilot = Autopilot()
 
             ui_config = config.get('ui', {})
-            self._init_gl_viewer(ui_config)
+            if ui_config.get('gl_view', False) or ui_config.get('gl_view_inset', False):
+            if config.get('ui', {}).get('gl_view', False):
+                try:
+                    from src.simulation.gl_world_viewer import GLWorldViewer
+                    arena_config = self.config.get('arena', {
+                        'width': 500.0,
+                        'depth': 500.0,
+                        'min_altitude': 10.0,
+                        'max_altitude': 150.0,
+                        'safe_zone_size': 50.0
+                    })
+                    self.gl_viewer = GLWorldViewer(
+                        width=self.renderer.width,
+                        height=self.renderer.height,
+                        world=self.world,
+                        arena_config=arena_config
+                    )
+                except Exception as exc:
+                    print(f"⚠️ GL World Viewer devre dışı: {exc}")
             
         # State
         self.running = False
@@ -671,6 +689,8 @@ class SimulationRunner:
                 inset_frame = gl_frame[..., ::-1].copy()
             if not use_gl_world:
                 gl_frame = None
+        if self.gl_viewer and self.renderer.show_gl_world:
+            gl_frame = self.gl_viewer.render(world_state, target_id=self.camera_target_id)
 
         self.renderer.render(
             world_state=world_state, 
@@ -685,6 +705,7 @@ class SimulationRunner:
             is_paused=self.world.is_paused,
             gl_frame=gl_frame,
             inset_frame=inset_frame
+            gl_frame=gl_frame
         )
 
 

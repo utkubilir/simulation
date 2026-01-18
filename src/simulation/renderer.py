@@ -82,6 +82,7 @@ class Renderer:
     def render(self, world_state, lock_state, sim_time=0.0, scenario="", seed=0,
                camera_frame=None, detections=None, tracks=None, observer_target_id=None,
                is_paused=False, gl_frame=None, inset_frame=None):
+               is_paused=False, gl_frame=None):
         """
         Render the complete UI.
         """
@@ -110,7 +111,7 @@ class Renderer:
                 hud_uav = next((u for u in world_state.get('uavs', {}).values() if u.get('is_player')), None)
                 
             if hud_uav:
-                self.hud.render(screen, hud_uav, detections, lock_state, self.ui_mode)
+                self.hud.render(screen, hud_uav, detections, lock_state, self.ui_mode, world_state=world_state)
             
             # 3. Simple Status Text
             font = self.map_renderer.font_small

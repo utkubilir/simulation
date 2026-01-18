@@ -115,6 +115,7 @@ class SimulationRunner:
         self.controller = None
         self.keyboard = None
         self.autopilot = None
+        self.gl_viewer = None
         
         if mode == 'ui':
             radar_heading_mode = config.get('ui', {}).get('radar_heading_mode', 'heading_up')
@@ -140,6 +141,25 @@ class SimulationRunner:
             self.controller = FlightController()
             self.keyboard = KeyboardMapper()
             self.autopilot = Autopilot()
+
+            if config.get('ui', {}).get('gl_view', False):
+                try:
+                    from src.simulation.gl_world_viewer import GLWorldViewer
+                    arena_config = self.config.get('arena', {
+                        'width': 500.0,
+                        'depth': 500.0,
+                        'min_altitude': 10.0,
+                        'max_altitude': 150.0,
+                        'safe_zone_size': 50.0
+                    })
+                    self.gl_viewer = GLWorldViewer(
+                        width=self.renderer.width,
+                        height=self.renderer.height,
+                        world=self.world,
+                        arena_config=arena_config
+                    )
+                except Exception as exc:
+                    print(f"⚠️ GL World Viewer devre dışı: {exc}")
             
         # State
         self.running = False
@@ -633,6 +653,9 @@ class SimulationRunner:
         detections = getattr(self, '_last_detections', [])
         tracks = getattr(self, '_last_tracks', [])
         frame = getattr(self, '_last_frame', None)
+        gl_frame = None
+        if self.gl_viewer and self.renderer.show_gl_world:
+            gl_frame = self.gl_viewer.render(world_state, target_id=self.camera_target_id)
 
         self.renderer.render(
             world_state=world_state, 
@@ -644,7 +667,8 @@ class SimulationRunner:
             detections=detections,
             tracks=tracks,
             observer_target_id=self.camera_target_id,
-            is_paused=self.world.is_paused
+            is_paused=self.world.is_paused,
+            gl_frame=gl_frame
         )
 
 
@@ -678,6 +702,8 @@ def main():
                         help='Output directory')
     parser.add_argument('--run-id', type=str, default=None,
                         help='Run ID (auto-generated if not provided)')
+    parser.add_argument('--gl-view', action='store_true',
+                        help='Enable OpenGL 3D world view overlay in UI mode')
     
     args = parser.parse_args()
     
@@ -696,6 +722,10 @@ def main():
         'output_dir': args.output,
         'run_id': args.run_id
     }
+
+    if args.gl_view:
+        config.setdefault('ui', {})
+        config['ui']['gl_view'] = True
     
     # Run simulation
     runner = SimulationRunner(config, mode=args.mode)

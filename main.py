@@ -28,6 +28,8 @@ def main():
                         help='Run ID')
     parser.add_argument('--duration', '-d', type=float,
                         help='Simülasyon süresi (saniye)')
+    parser.add_argument('--gl-view', action='store_true',
+                        help='OpenGL 3D world view overlay (UI modunda)')
     
     args = parser.parse_args()
     
@@ -100,6 +102,9 @@ def main():
             
         if args.duration:
             config['duration'] = args.duration
+        if args.gl_view:
+            config.setdefault('ui', {})
+            config['ui']['gl_view'] = True
         
     # Run with configured mode (default UI)
     run_mode = config.get('mode', 'ui')

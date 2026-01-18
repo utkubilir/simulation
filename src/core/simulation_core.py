@@ -525,7 +525,7 @@ class SimulationCore:
             scenario=self.config.scenario,
             own_state=own_state,
             targets=targets,
-            detections=[d.copy() if isinstance(d, dict) else d for d in self._last_detections],
+            detections=list(self._last_detections),
             tracks=[{'id': t.id, 'bbox': t.bbox, 'age': t.age} 
                     for t in self._last_tracks] if self._last_tracks else [],
             lock=lock_dict,

@@ -6,6 +6,7 @@ import pytest
 import sys
 from pathlib import Path
 import numpy as np
+from unittest.mock import MagicMock
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -201,3 +202,44 @@ class TestAutopilotWaypoint:
         
         # Should have some aileron or rudder command to turn east
         assert controls is not None
+
+    def test_waypoint_optimization(self):
+        """Should only reset waypoints if they changed."""
+        ap = Autopilot()
+        ap.set_mode(AutopilotMode.COMBAT)
+
+        # Mock combat manager and set_waypoints
+        ap.combat_manager.update = MagicMock()
+        ap.set_waypoints = MagicMock(wraps=ap.set_waypoints)
+
+        # 1. First update
+        wps = [[100.0, 100.0, 100.0]]
+        ap.combat_manager.update.return_value = {
+            'mode': 'waypoint',
+            'params': {'waypoints': wps}
+        }
+
+        uav_state = {
+            'position': np.array([0, 0, 100]),
+            'velocity': np.array([20, 0, 0]),
+            'orientation': np.array([0, 0, 0]),
+            'speed': 20.0,
+            'altitude': 100.0,
+            'heading': 0.0
+        }
+
+        ap.update(uav_state, dt=0.1)
+        assert ap.set_waypoints.call_count == 1
+
+        # 2. Second update - same waypoints
+        ap.update(uav_state, dt=0.1)
+        assert ap.set_waypoints.call_count == 1  # Should not increase
+
+        # 3. Third update - different waypoints
+        wps2 = [[200.0, 200.0, 100.0]]
+        ap.combat_manager.update.return_value = {
+            'mode': 'waypoint',
+            'params': {'waypoints': wps2}
+        }
+        ap.update(uav_state, dt=0.1)
+        assert ap.set_waypoints.call_count == 2

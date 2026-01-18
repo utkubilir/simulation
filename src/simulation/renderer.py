@@ -82,6 +82,7 @@ class Renderer:
     def render(self, world_state, lock_state, sim_time=0.0, scenario="", seed=0,
                camera_frame=None, detections=None, tracks=None, observer_target_id=None,
                is_paused=False, gl_frame=None, inset_frame=None):
+
         """
         Render the complete UI.
         """

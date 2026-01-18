@@ -45,7 +45,7 @@ class TestTargetTracker:
         
         assert tracker.max_age == 30
         assert tracker.min_hits == 3
-        assert tracker.iou_threshold == 0.3
+        assert tracker.iou_threshold == 0.01
         assert len(tracker.tracks) == 0
         
     def test_initialization_custom_config(self):

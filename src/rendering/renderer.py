@@ -369,24 +369,6 @@ class GLRenderer:
         Args:
             environment: Environment objesi (terrain + objects)
         """
-        from src.rendering.geometry import GeometryGenerator
-        
-        # Terrain mesh oluştur (base terrain for origin area)
-        terrain = environment.terrain
-        terrain_mesh = GeometryGenerator.create_terrain_mesh(
-            terrain.heightmap,
-            tuple(terrain.size),
-            resolution=64  # Performance için düşük
-        )
-        
-        self.vbo_terrain = self.ctx.buffer(terrain_mesh.tobytes())
-        self.vao_terrain = self.ctx.simple_vertex_array(
-            self.prog_terrain,
-            self.vbo_terrain,
-            'in_position', 'in_normal', 'in_texcoord'
-        )
-        self.terrain_vertex_count = len(terrain_mesh) // 6  # 6 float per vertex
-        
         # World objects için mesh'leri hazırla
         self._init_object_meshes()
         
@@ -398,6 +380,7 @@ class GLRenderer:
             environment.chunk_manager.on_chunk_loaded = self._on_chunk_loaded
             environment.chunk_manager.on_chunk_unloaded = self._on_chunk_unloaded
             self._chunk_vaos = {}  # {coords: vao}
+            self._chunk_vbos = {}  # {coords: vbo}
             self._chunk_vbos = {}  # {coords: vbo}
     
     def _on_chunk_loaded(self, chunk):
@@ -419,6 +402,14 @@ class GLRenderer:
         
         self._chunk_vbos[chunk.coords] = vbo
         self._chunk_vaos[chunk.coords] = vao
+        
+        # Shadow VAO (Manual definition to handle stride)
+        # Terrain VBO format: 3f (pos), 3f (norm), 2f (tex)
+        # Shadow shader only needs pos. Use stride to skip norm/tex.
+        vao_shadow = self.ctx.vertex_array(self.prog_shadow, [
+            (vbo, '3f 20x', 'in_position')
+        ])
+        chunk.vao_shadow = vao_shadow
         chunk.vao = vao
         chunk.vertex_count = len(mesh) // 6
     
@@ -428,12 +419,17 @@ class GLRenderer:
         if coords in self._chunk_vaos:
             self._chunk_vaos[coords].release()
             del self._chunk_vaos[coords]
+            
+        if hasattr(chunk, 'vao_shadow') and chunk.vao_shadow:
+            chunk.vao_shadow.release()
+            chunk.vao_shadow = None
+            
         if coords in self._chunk_vbos:
             self._chunk_vbos[coords].release()
             del self._chunk_vbos[coords]
         chunk.vao = None
     
-    def render_terrain_chunks(self):
+    def render_terrain_chunks(self, program=None):
         """Sonsuz dünya: Görünür chunk'ları render et"""
         if not hasattr(self, 'environment') or not hasattr(self.environment, 'chunk_manager'):
             return
@@ -441,25 +437,98 @@ class GLRenderer:
         import pyrr
         chunks = self.environment.chunk_manager.get_visible_chunks()
         
+        # Use provided program (shadow pass) or default terrain shader
+        prog = program if program else self.prog_terrain
+        
         for chunk in chunks:
             if not chunk.vao:
                 continue
             
-            # Her chunk için model matrisi (dünya pozisyonuna göre offset)
+            # Her chunk için model matrisi
             ox, oy = chunk.world_origin
             model = np.eye(4, dtype='f4')
-            model[3, 0] = ox - 1000.0  # GL space: merkez (0,0)
-            model[3, 2] = oy - 1000.0
             
-            self.prog_terrain['m_model'].write(model.tobytes())
-            self.prog_terrain['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-            self.prog_terrain['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-            self.prog_terrain['u_color'].value = (1.0, 1.0, 1.0)
+            # Sim (x, y, z) -> GL (x, z, -y) transformation logic
+            # Chunk is on XY plane in Sim. In GL it should be on XZ plane.
+            # But the chunk mesh itself is built on XY plane?
+            # Wait, chunk VAO contains vertices. MapData generates heights.
+            # Usually chunk vertices are (x, y, z).
+            # If we want to rotate them:
+            # We can use a rotation matrix OR set the position columns manually.
             
-            if 'viewPos' in self.prog_terrain:
-                self.prog_terrain['viewPos'].value = tuple(self.camera.position)
+            # Legacy logic used model[3,0] type setting.
+            # Let's use proper transformation.
+            # Sim Origin (ox, oy)
+            # GL Position (ox, 0, -oy)
             
-            chunk.vao.render()
+            # Coordinate Transform Matrix (Z-Up -> Y-Up)
+            # [1, 0, 0, 0]
+            # [0, 0,-1, 0]
+            # [0, 1, 0, 0]
+            # [0, 0, 0, 1]
+            
+            # Translate to (ox, oy, 0) then Rotate?
+            # Or just Translate in GL coords?
+            
+            # Let's construct the matrix:
+            # Translation
+            trans = pyrr.matrix44.create_from_translation([ox, 0, -oy], dtype='f4')
+            
+            # Rotation of the MESH itself? 
+            # If mesh is (x, y, z) where z is height.
+            # We want z -> y (up), y -> -z (north).
+            # So X->X, Y->-Z, Z->Y.
+            
+            # Create rotation matrix
+            # Col 0: (1, 0, 0)
+            # Col 1: (0, 0, -1) -> Sim Y maps to GL -Z
+            # Col 2: (0, 1, 0) -> Sim Z maps to GL Y
+            
+            rot = np.array([
+                [1, 0, 0, 0],
+                [0, 0, -1, 0],
+                [0, 1, 0, 0],
+                [0, 0, 0, 1]
+            ], dtype='f4')
+            
+            # Combine: Translate * Rotate * Vertex? Or Rotate * Translate?
+            # Vertex is local (0..chunk_size). 
+            # We want to move it to (ox, oy) then rotate?
+            # No, if we rotate, (x, y, z) becomes (x, z, -y).
+            # Then we add offset (ox, 0, -oy).
+            
+            model = pyrr.matrix44.multiply(rot, trans)
+            
+            prog['m_model'].write(model.tobytes())
+            
+            # View/Proj only if not shadow pass (shadow pass handles these globally? No.)
+            # If program is passed, caller might have set uniforms?
+            # BUT render_instanced_aircraft says "program: Optional shader".
+            # Shadow pass sets 'lightSpaceMatrix' globally.
+            # But m_model is per object.
+            # m_view/m_proj are camera specific. In shadow pass, we don't need camera view/proj?
+            # Wait. Shadow mapping needs Light View/Proj. 
+            # That is 'lightSpaceMatrix = light_proj * light_view'.
+            # Vertex Shader usually does: gl_Position = lightSpaceMatrix * model * vec4(pos, 1.0);
+            
+            # So for shadow pass, we DO NOT write camera m_view/m_proj.
+            # We assume 'program' (shadow shader) has 'm_model' and 'lightSpaceMatrix'.
+            # 'lightSpaceMatrix' is set in begin_shadow_pass globally? 
+            # No, uniform must be set for the program.
+            # Check render_instanced_aircraft implementation.
+            
+            if not program:
+                prog['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+                prog['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+                prog['u_color'].value = (1.0, 1.0, 1.0)
+                if 'viewPos' in prog:
+                    prog['viewPos'].value = tuple(self.camera.position)
+            
+            # Select proper VAO
+            if program == self.prog_shadow and hasattr(chunk, 'vao_shadow') and chunk.vao_shadow:
+                chunk.vao_shadow.render()
+            else:
+                chunk.vao.render(prog if program else None)
         
     def _init_object_meshes(self):
         """Object mesh'lerini oluştur (building, tree)"""
@@ -473,6 +542,12 @@ class GLRenderer:
             'in_position', 'in_normal'
         )
         
+        
+        # Building Shadow VAO (3f pos, 3f norm -> skip norm)
+        self.vao_building_shadow = self.ctx.vertex_array(self.prog_shadow, [
+            (self.vbo_building, '3f 12x', 'in_position')
+        ])
+        
         # Tree mesh
         tree_mesh = GeometryGenerator.create_tree_mesh(1.0, 0.5)  # Unit size
         self.vbo_tree = self.ctx.buffer(tree_mesh.tobytes())
@@ -480,6 +555,11 @@ class GLRenderer:
             self.prog_aircraft, self.vbo_tree,
             'in_position', 'in_normal'
         )
+        
+        # Tree Shadow VAO
+        self.vao_tree_shadow = self.ctx.vertex_array(self.prog_shadow, [
+            (self.vbo_tree, '3f 12x', 'in_position')
+        ])
         
         # Arena pole mesh (for boundary markers)
         pole_mesh = GeometryGenerator.create_pole_mesh(height=1.0, radius=0.5)  # Unit height
@@ -778,23 +858,27 @@ class GLRenderer:
             return False
         return True
     
-    def render_world_objects(self, objects):
+    def render_world_objects(self, objects, program=None):
         """
         World object'lerini render et.
         
         Args:
             objects: WorldObject listesi
+            program: Optional shader program override (for shadow pass)
         """
         if not hasattr(self, 'vao_building'):
             return
             
         import pyrr
         
-        # NED → GL transform (same as terrain)
+        # Sim (Z-Up) to GL (Y-Up) Transformation
+        # X -> X
+        # Y -> -Z (North is forward/into screen)
+        # Z -> Y (Altitude is Up)
         sim_to_gl = np.array([
-            [0, 1, 0, 0],
-            [0, 0, -1, 0],
-            [-1, 0, 0, 0],
+            [1, 0, 0, 0],   # Col 0 (X) maps to X
+            [0, 0, -1, 0],  # Col 1 (Y) maps to -Z
+            [0, 1, 0, 0],   # Col 2 (Z) maps to Y
             [0, 0, 0, 1]
         ], dtype='f4')
         
@@ -806,58 +890,88 @@ class GLRenderer:
             # Object tipine göre VAO seç
             if obj.obj_type == 'building':
                 vao = self.vao_building
+                # Default colors if not shadow pass
+                prog = program if program else self.prog_aircraft # Uses simple shader
+                
             elif obj.obj_type == 'tree':
                 vao = self.vao_tree
+                prog = program if program else self.prog_aircraft
             else:
-                continue  # Bilinmeyen tip
+                continue
             
-            # Model matrix oluştur (scale + rotate + translate + coord transform)
+            # Model matrix oluştur
+            # scale -> rotate -> translate -> coord transform
             scale_mat = pyrr.matrix44.create_from_scale(
                 [obj.size[0], obj.size[1], obj.size[2]], dtype='f4'
             )
-            rot_mat = pyrr.matrix44.create_from_y_rotation(obj.rotation, dtype='f4')
+            # Sim Rotation is usually yaw around Z axis.
+            # In GL, Z maps to Y. So rotation around Sim-Z is rotation around GL-Y.
+            rot_mat = pyrr.matrix44.create_from_y_rotation(np.radians(obj.rotation), dtype='f4')
+            
             trans_mat = pyrr.matrix44.create_from_translation(obj.position, dtype='f4')
             
             model = pyrr.matrix44.multiply(scale_mat, rot_mat)
             model = pyrr.matrix44.multiply(model, trans_mat)
-            model = pyrr.matrix44.multiply(model, sim_to_gl)  # Apply coord transform
+            model = pyrr.matrix44.multiply(model, sim_to_gl)
             
             # Shader uniforms
-            self.prog_aircraft['m_model'].write(model.tobytes())
-            self.prog_aircraft['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-            self.prog_aircraft['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-            self.prog_aircraft['u_color'].value = obj.color
+            prog['m_model'].write(model.tobytes())
             
-            if 'viewPos' in self.prog_aircraft:
-                self.prog_aircraft['viewPos'].value = tuple(self.camera.position)
-            if 'lightSpaceMatrix' in self.prog_aircraft and hasattr(self, 'light_space_matrix'):
-                self.prog_aircraft['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
+            if not program:
+                prog['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+                prog['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+                prog['u_color'].value = obj.color
+                
+                if 'viewPos' in prog:
+                    prog['viewPos'].value = tuple(self.camera.position)
+                if 'lightSpaceMatrix' in prog and hasattr(self, 'light_space_matrix'):
+                    prog['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
             
-            vao.render()
+            # Use Shadow VAO if doing shadow pass
+            if program == self.prog_shadow:
+                if obj.obj_type == 'building' and hasattr(self, 'vao_building_shadow'):
+                    self.vao_building_shadow.render()
+                elif obj.obj_type == 'tree' and hasattr(self, 'vao_tree_shadow'):
+                    self.vao_tree_shadow.render()
+                else:
+                    # Fallback (might fail if shader mismatch, but better than nothing)
+                    vao.render() 
+            else:
+                vao.render(prog if program else None)
     
-    def render_environment(self):
+    def render_environment(self, shadow_pass=False):
         """
         Tüm environment'ı render et (sky + terrain + arena + objects).
-        init_environment() çağrıldıktan sonra kullanılır.
+        
+        Args:
+            shadow_pass: If True, renders for shadow map (depth only).
         """
-        # 1. Skybox
-        self.render_sky()
+        # Select shader program for shadow pass
+        program = self.prog_shadow if shadow_pass else None
+        
+        if not shadow_pass:
+            # 1. Skybox (No shadows for sky)
+            self.render_sky()
         
         # 2. Terrain (Chunk-based veya static)
         if hasattr(self, '_chunk_vaos') and self._chunk_vaos:
             # Sonsuz dünya: Chunk'ları render et
-            self.render_terrain_chunks()
+            self.render_terrain_chunks(program=program)
         else:
             # Static terrain (origin area)
-            self.render_terrain()
+            # render_terrain needs update too if we want shadows on legacy terrain
+            # But legacy terrain is deprecated.
+            if not shadow_pass:
+                self.render_terrain()
         
-        # 3. Arena (poles, markers)
-        if hasattr(self, 'arena'):
-            self.render_arena()
+        if not shadow_pass:
+            # 3. Arena (poles, markers) - Markers usually don't cast shadows
+            if hasattr(self, 'arena'):
+                self.render_arena()
             
         # 4. World objects (trees, buildings)
         if hasattr(self, 'environment'):
-            self.render_world_objects(self.environment.get_all_objects())
+            self.render_world_objects(self.environment.get_all_objects(), program=program)
 
     def begin_shadow_pass(self):
         """Start Shadow Map Rendering Pass"""
@@ -877,6 +991,11 @@ class GLRenderer:
         )
         self.light_space_matrix = pyrr.matrix44.multiply(light_view, light_projection)
         self.prog_shadow['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
+        
+        # Render scene for shadows
+        # Instanced aircraft are rendered by caller (render_instanced_aircraft(program=prog_shadow))
+        # But we must render static environment here if we want terrain/buildings to cast shadows
+        self.render_environment(shadow_pass=True)
 
     def begin_frame(self):
         """Render döngüsünü başlat (Main FBO Bind)"""

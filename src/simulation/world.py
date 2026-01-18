@@ -150,66 +150,44 @@ class SimulationWorld:
             if not uav.is_crashed:
                 uav.update(dt)
                 
-                # Dünya sınırlarını kontrol et
-                self._enforce_boundaries(uav)
+                # Dünya sınırlarını ve çarpışmaları kontrol et
+                self._check_collisions(uav)
                 
         self.time += dt
         self.stats['total_updates'] += 1
         
-    def _enforce_boundaries(self, uav: FixedWingUAV):
-        """Dünya sınırlarını uygula (6DOF uyumlu)"""
+    def _check_collisions(self, uav: FixedWingUAV):
+        """
+        Çarpışma kontrolleri (Zemin ve Tavan)
+        Sonsuz dünyada X/Y sınırı yoktur.
+        """
         pos = uav.state.position
         
-        # Velocity in Body Frame
-        v_body = uav.state.velocity
+        # 1. Tavan Kontrolü (Max Altitude)
+        MAX_ALTITUDE = 1000.0
+        if pos[2] > MAX_ALTITUDE:
+            pos[2] = MAX_ALTITUDE
+            if uav.state.velocity[2] > 0:
+                uav.state.velocity[2] = 0
         
-        # Rotation Matrix to convert Body -> Inertial
-        # We need this to check and reflect velocity in Inertial Frame
-        phi, theta, psi = uav.state.orientation
-        R_b2i = uav._rotation_matrix(phi, theta, psi)
-        R_i2b = R_b2i.T
+        # 2. Zemin Kontrolü (Terrain Collision)
+        # Anlık konumdaki arazi yüksekliğini al
+        from src.simulation.map_data import WorldMap
+        ground_z = WorldMap.get_terrain_height(pos[0], pos[1])
         
-        # Convert Body Velocity to Inertial for reflection checks
-        v_inertial = R_b2i @ v_body
+        # Tolerans (İHA'nın yarıçapı kadar)
+        COLLISION_THRESHOLD = 0.5 
         
-        did_hit = False
-        
-        # X sınırları
-        if pos[0] < 0:
-            pos[0] = 0
-            if v_inertial[0] < 0:
-                v_inertial[0] *= -0.5
-                did_hit = True
-        elif pos[0] > self.world_size[0]:
-            pos[0] = self.world_size[0]
-            if v_inertial[0] > 0:
-                v_inertial[0] *= -0.5
-                did_hit = True
-            
-        # Y sınırları
-        if pos[1] < 0:
-            pos[1] = 0
-            if v_inertial[1] < 0:
-                v_inertial[1] *= -0.5
-                did_hit = True
-        elif pos[1] > self.world_size[1]:
-            pos[1] = self.world_size[1]
-            if v_inertial[1] > 0:
-                v_inertial[1] *= -0.5
-                did_hit = True
-            
-        # Z sınırları (tavan)
-        if pos[2] > self.world_size[2]:
-            pos[2] = self.world_size[2]
-            if v_inertial[2] > 0:
-                v_inertial[2] = 0 # Tavana çarpınca dikey hızı sıfırla
-                did_hit = True
+        if pos[2] < ground_z + COLLISION_THRESHOLD:
+            # Yere çarptı!
+            if not uav.is_crashed:
+                impact_speed = np.linalg.norm(uav.state.velocity)
+                print(f"CRASH: {uav.id} hit terrain at {pos} speed={impact_speed:.1f}")
+                uav.set_crashed(True)
                 
-        # Zemin (yer) kontrolünü UAV sınıfı kendi yapıyor (update metodunda)
-        
-        if did_hit:
-            # Convert modified inertial velocity back to body frame
-            uav.state.velocity = R_i2b @ v_inertial
+                # Yerin altına girmesini engelle (görsel olarak)
+                pos[2] = ground_z + COLLISION_THRESHOLD
+                uav.state.velocity[:] = 0  # Durdur
             
     def get_uav_states_for_detection(self, exclude_id: str = None) -> List[Dict]:
         """

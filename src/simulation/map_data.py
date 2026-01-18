@@ -115,55 +115,92 @@ class WorldMap:
         return noise
 
     @staticmethod
-    def get_terrain_height(x: float, y: float) -> float:
+    def get_terrain_height(x, y):
         """
         Belirtilen koordinattaki zemin yüksekliğini döndürür.
         SONSUZ KOORDİNAT DESTEKLİ: Her koordinat için tutarlı yükseklik üretir.
+        Girdi (x, y) float veya np.ndarray olabilir.
         """
-        # Pist merkezi (1500, 1500) etrafındaki alan düz olmalı
+        # x ve y'nin array olup olmadığını kontrol et
+        x = np.asarray(x)
+        y = np.asarray(y)
+        scalar_input = False
+        if x.ndim == 0:
+            x = x[np.newaxis]
+            y = y[np.newaxis]
+            scalar_input = True
+
+        # Pist merkezi (1500, 1500) etrafındaki düz alan
         RUNWAY_CENTER_X, RUNWAY_CENTER_Y = 1500.0, 1500.0
         dist_runway = np.sqrt((x - RUNWAY_CENTER_X)**2 + (y - RUNWAY_CENTER_Y)**2)
         
-        if dist_runway < 300:
-            base_h = 0.0
-        else:
-            # Perlin Noise - sonsuz koordinatlar için çalışır
-            # Offset ekleyerek negatif değerleri pozitife çeviriyoruz
-            noise = WorldMap._perlin_noise(x, y) * 30
-            noise += WorldMap._perlin_noise(x * 2, y * 2, seed=123) * 15
-            base_h = noise + 25  # Offset: Temel zemin seviyesi
+        # Base Height Calculation (Perlin Noise)
+        noise = WorldMap._perlin_noise(x, y) * 30
+        noise += WorldMap._perlin_noise(x * 2, y * 2, seed=123) * 15
+        base_h = noise + 25  # Offset
+        
+        # Pist etrafında yükselme efekti (Sadece 0..2000 içinde ve sınıra yakınsa)
+        # Vectorized boundary check: (0 <= x <= 2000) & (0 <= y <= 2000)
+        in_bounds = (x >= 0) & (x <= 2000) & (y >= 0) & (y <= 2000)
+        
+        # Yükselme efekti hesapla (orijin içinde)
+        # Efekt sadece bounds içindeyse uygulanır
+        if np.any(in_bounds):
+            x_orig = x - 1000.0
+            y_orig = y - 1000.0
             
-            # Pist etrafında yükselme efekti (sadece orijin bölgesinde)
-            if 0 <= x <= 2000 and 0 <= y <= 2000:
-                x_orig = x - 1000.0
-                y_orig = y - 1000.0
-                dist_edge = min(abs(x_orig + 1000), abs(x_orig - 1000),
-                                abs(y_orig + 1000), abs(y_orig - 1000))
-                if dist_edge < 400:
-                    base_h += (400 - dist_edge) * 0.15
+            # min(d1, d2, d3, d4) vectorized
+            d1 = np.abs(x_orig + 1000)
+            d2 = np.abs(x_orig - 1000)
+            d3 = np.abs(y_orig + 1000)
+            d4 = np.abs(y_orig - 1000)
+            dist_edge = np.minimum(np.minimum(d1, d2), np.minimum(d3, d4))
+            
+            # edge_effect = (400 - dist_edge) * 0.15 where dist_edge < 400
+            edge_mask = (dist_edge < 400) & in_bounds
+            base_h = np.where(edge_mask, base_h + (400 - dist_edge) * 0.15, base_h)
 
-        base_h = max(0.0, base_h)
+        # Pist Düzlüğü (Override everything near runway)
+        base_h = np.where(dist_runway < 300, 0.0, base_h)
+        base_h = np.maximum(0.0, base_h)
 
-        # Dağlar (sadece orijin bölgesinde)
-        max_cone_h = 0.0
-        if 0 <= x <= 2000 and 0 <= y <= 2000:
-            if not WorldMap.STATIC_OBJECTS:
-                WorldMap._init_static_objects()
+        # Dağlar (Cone Mountains) - Sadece Orijin Bounds içinde
+        # Max Cone Height calculation
+        max_cone_h = np.zeros_like(x)
+        
+        # Optimization: Only check mountains if we are somewhat near origin
+        # Simple bounding box for all mountains: (-1500, -1500) to (2500, 2500)
+        # But we check specific mountains.
+        
+        # Sadece bounds içinde dağ kontrolü yapabilirdik ama dağlar 0..2000 dışında da olabilir mi?
+        # STATIC_OBJECTS listesi manuel eklendi. Listede 5 dağ var.
+        # Bunların her biri için mesafe kontrolü (vektörize)
+        
+        if not WorldMap.STATIC_OBJECTS:
+            WorldMap._init_static_objects()
 
-            for obj in WorldMap.STATIC_OBJECTS:
-                if obj.obj_type == "mountain_cone":
-                    dx = x - obj.position[0]
-                    dy = y - obj.position[1]
-                    dist = np.sqrt(dx*dx + dy*dy)
-                    r = obj.meta['radius']
-                    h = obj.meta['height']
+        for obj in WorldMap.STATIC_OBJECTS:
+            if obj.obj_type == "mountain_cone":
+                dx = x - obj.position[0]
+                dy = y - obj.position[1]
+                dist = np.sqrt(dx*dx + dy*dy)
+                r = obj.meta['radius']
+                h = obj.meta['height'] # height of cone
 
-                    if dist < r:
-                        cone_h = h * (1.0 - dist / r)
-                        if cone_h > max_cone_h:
-                            max_cone_h = cone_h
+                # Cone formülü: h * (1 - dist/r)
+                cone_val = h * (1.0 - dist / r)
+                
+                # Sadece dist < r olan yerlerde geçerli, değilse 0 (veya negatif)
+                cone_val = np.maximum(0.0, cone_val)
+                
+                # Max accumulation
+                max_cone_h = np.maximum(max_cone_h, cone_val)
 
-        return max(base_h, max_cone_h)
+        final_h = np.maximum(base_h, max_cone_h)
+        
+        if scalar_input:
+            return float(final_h[0])
+        return final_h
 
 # Modül yüklenince listeyi doldur
 WorldMap._init_static_objects()

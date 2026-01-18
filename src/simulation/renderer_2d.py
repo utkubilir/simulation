@@ -317,123 +317,13 @@ class Renderer2D:
         radius = int(self.detection_radius * self.zoom)
         pygame.draw.circle(self.screen, (60, 80, 60), (sx, sy), radius, 1)
         
-    def _draw_hud(self, world_state: Dict, lock_state: Dict,
-                  sim_time: float, scenario: str, seed: int):
-        """Draw HUD overlay"""
-        # Top bar
-        self._draw_top_hud(sim_time, scenario, seed)
-        
-        # Bottom bar - lock status
-        self._draw_lock_hud(lock_state)
-        
-        # Player telemetry
-        player = self._get_player(world_state)
-        if player:
-            self._draw_telemetry_hud(player)
-            
-    def _draw_top_hud(self, sim_time: float, scenario: str, seed: int):
-        """Draw top HUD bar"""
-        # Background
-        bar_height = 40
-        surface = pygame.Surface((self.map_rect.width, bar_height), pygame.SRCALPHA)
-        surface.fill(self.COLOR_HUD_BG)
-        self.screen.blit(surface, (0, 0))
-        
-        # Text
-        time_text = f"Time: {sim_time:.1f}s"
-        scenario_text = f"Scenario: {scenario}"
-        seed_text = f"Seed: {seed}"
-        
-        self._draw_text(time_text, 10, 10)
-        self._draw_text(scenario_text, 200, 10)
-        self._draw_text(seed_text, 450, 10)
-        
-    def _draw_lock_hud(self, lock_state: Dict):
-        """Draw lock status bar at bottom"""
-        if not lock_state:
-            return
-            
-        bar_height = 50
-        y = self.map_rect.height - bar_height
-        
-        # Background
-        surface = pygame.Surface((self.map_rect.width, bar_height), pygame.SRCALPHA)
-        surface.fill(self.COLOR_HUD_BG)
-        self.screen.blit(surface, (0, y))
-        
-        # Lock state
-        state = lock_state.get('state', 'idle').upper()
-        target_id = lock_state.get('target_id', '--')
-        progress = lock_state.get('progress', 0)
-        lock_time = lock_state.get('lock_time', 0)
-        score = lock_state.get('score', {})
-        
-        # State color
-        state_colors = {
-            'IDLE': (150, 150, 150),
-            'LOCKING': (255, 200, 50),
-            'SUCCESS': (100, 255, 100)
-        }
-        state_color = state_colors.get(state, self.COLOR_TEXT)
-        
-        # Draw state
-        state_text = f"Lock: {state}"
-        self._draw_text(state_text, 10, y + 15, state_color)
-        
-        # Draw target
-        target_text = f"Target: {target_id if target_id else '--'}"
-        self._draw_text(target_text, 180, y + 15)
-        
-        # Draw progress bar
-        bar_x = 350
-        bar_width = 150
-        bar_rect = pygame.Rect(bar_x, y + 15, bar_width, 20)
-        pygame.draw.rect(self.screen, (50, 50, 50), bar_rect)
-        
-        fill_width = int(bar_width * progress)
-        if fill_width > 0:
-            fill_color = (100, 255, 100) if progress >= 1.0 else (255, 200, 50)
-            fill_rect = pygame.Rect(bar_x, y + 15, fill_width, 20)
-            pygame.draw.rect(self.screen, fill_color, fill_rect)
-            
-        pygame.draw.rect(self.screen, (100, 100, 100), bar_rect, 2)
-        
-        # Draw lock time
-        time_text = f"{lock_time:.1f}s / 4.0s"
-        self._draw_text(time_text, 520, y + 15)
-        
-        # Draw score
-        total_score = score.get('total_score', 0)
-        correct = score.get('correct_locks', 0)
-        score_text = f"Score: {total_score} ({correct} locks)"
-        self._draw_text(score_text, 700, y + 15)
-        
-    def _draw_telemetry_hud(self, player: Dict):
-        """Draw player telemetry"""
-        x = 10
-        y = 60
-        
-        pos = player.get('position', [0, 0, 0])
-        heading = player.get('heading', 0)
-        speed = np.linalg.norm(player.get('velocity', [0, 0, 0]))
-        altitude = pos[2] if len(pos) > 2 else 0
-        
-        # Background
-        surface = pygame.Surface((180, 80), pygame.SRCALPHA)
-        surface.fill(self.COLOR_HUD_BG)
-        self.screen.blit(surface, (x, y))
-        
-        self._draw_text(f"Speed: {speed:.1f} m/s", x + 10, y + 10, size='small')
-        self._draw_text(f"Alt: {altitude:.0f} m", x + 10, y + 30, size='small')
-        self._draw_text(f"Hdg: {heading:.0f}°", x + 10, y + 50, size='small')
-        
-    def _draw_text(self, text: str, x: int, y: int, 
-                   color: Tuple[int, int, int] = None, size: str = 'normal'):
-        """Draw text"""
-        color = color or self.COLOR_TEXT
-        font = self.font if size == 'normal' else self.font_small
-        surface = font.render(text, True, color)
-        self.screen.blit(surface, (x, y))
+    def _get_player(self, world_state: Dict) -> Optional[Dict]:
+        """Get player UAV from world state"""
+        uavs = world_state.get('uavs', {})
+        for uav_id, uav in uavs.items():
+            if uav.get('is_player', False):
+                return uav
+        return None
         
     def _get_player(self, world_state: Dict) -> Optional[Dict]:
         """Get player UAV from world state"""

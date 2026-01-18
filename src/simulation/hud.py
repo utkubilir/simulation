@@ -71,7 +71,8 @@ class HUD:
         
     def render(self, surface: pygame.Surface, uav_state: dict, 
                detections: list = None, lock_state: dict = None,
-               ui_mode = None, world_state: dict = None):
+               ui_mode = None, world_state: dict = None,
+               camera_config: dict = None):
         """
         Render HUD elements.
         
@@ -81,6 +82,7 @@ class HUD:
             lock_state: dict of lock status (optional)
             ui_mode: UI mode enum (optional, for mode-specific rendering)
             world_state: World state dict (optional, for Radar)
+            camera_config: dict with 'fov' and 'resolution' (optional)
         """
         # Extract state
         orientation = uav_state.get('orientation', [0.0, 0.0, 0.0])
@@ -96,6 +98,12 @@ class HUD:
         vel = np.linalg.norm(uav_state.get('velocity', np.zeros(3)))
         pos = uav_state.get('position', np.zeros(3))
         alt = pos[2]
+        
+        # Calculate dynamic FOV scale if config provided
+        if camera_config:
+            fov = camera_config.get('fov', 60.0)
+            # Update pixels per degree based on current FOV and height
+            self.pixels_per_degree = self.height / fov
         
         # Update Widgets
         self.spd_tape.update(vel)
@@ -113,7 +121,7 @@ class HUD:
         
         # 4. AR Detections
         if detections:
-            self._draw_detections(surface, detections, lock_state)
+            self._draw_detections(surface, detections, lock_state, camera_config)
             
         # 5. Crosshair (Center)
         self._draw_crosshair(surface, lock_state)
@@ -148,38 +156,9 @@ class HUD:
             pos = np.array(uav.get('position', [0,0,0]))
             rel = pos - player_pos
 
-            # Rotate to body frame (X=Forward, Y=Right, Z=Down)
-            # In simulation coords: X=East, Y=North.
-            # Heading 0 = East.
-            # Body X (Forward) = East.
-            # Body Y (Left) = North.
-            # Wait. If X=East, Y=North.
-            # Vector (1, 0) is East. (0, 1) is North.
-            # Rotation by -heading:
-            # If heading=0: bx=rx, by=ry.
-            # If heading=90 (North): c=0, s=-1.
-            # rel = (0, 1) [Target North].
-            # bx = 0*0 - 1*(-1) = 1. (Forward). Correct.
-            # by = 0*(-1) + 1*0 = 0.
-
+            # Rotate to body frame
             bx = rel[0]*c - rel[1]*s
             by = rel[0]*s + rel[1]*c
-
-            # Radar widget expects 'rel_pos': [x, y]
-            # My logic in Renderer2D says:
-            # heading_up logic in Radar:
-            # sx = center + ry*scale (Right is X)
-            # sy = center - rx*scale (Forward is Y up)
-            # So if I pass [bx, -by],
-            # sx = center - by*scale.
-            # sy = center - bx*scale.
-            # If bx is forward, sy is Up. Correct.
-            # If by is Left (positive Y in Sim?), then -by is Right?
-            # In Sim: Y is North (Left of East). So +Y is Left.
-            # So -by is Right.
-            # So passing [bx, -by] makes sense if Radar expects [forward, right].
-            # Let's check Renderer2D again.
-            # Renderer2D: rel_pos = [bx, -by].
 
             radar_targets.append({
                 'rel_pos': [bx, -by],
@@ -189,12 +168,16 @@ class HUD:
 
         self.radar.render(surface, radar_targets, player_heading, 60, heading_up=True)
 
-    def _draw_detections(self, surface, detections, lock_state):
+    def _draw_detections(self, surface, detections, lock_state, camera_config=None):
         """Draw Augmented Reality bounding boxes"""
         locked_id = lock_state.get('target_id') if lock_state else None
         
-        # Default camera size
+        # Dynamic camera scale
         cam_w, cam_h = 640, 480
+        if camera_config:
+            res = camera_config.get('resolution', (640, 480))
+            cam_w, cam_h = res[0], res[1]
+            
         scale_x = self.width / cam_w
         scale_y = self.height / cam_h
         

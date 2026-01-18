@@ -79,11 +79,12 @@ void main() {
     
     // Fog - Realistic Atmospheric Scattering
     float dist = length(viewPos - v_fragPos);
-    float fogDensity = 0.0012;
+    float fogDensity = 0.0002; // Reduced from 0.0012 to see further
     float fogFactor = 1.0 - exp(-dist * fogDensity);
     
     // Mix horizon haze color (matching sky_fs horizon)
-    vec3 horizonHaze = vec3(0.6, 0.7, 0.9);
+    // Mix horizon haze color (matching sky_fs horizon)
+    vec3 horizonHaze = vec3(0.4, 0.5, 0.7); // Darker blue haze
     result = mix(result, horizonHaze, clamp(fogFactor, 0.0, 1.0));
     
     f_color = vec4(result, 1.0);

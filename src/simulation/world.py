@@ -154,6 +154,14 @@ class SimulationWorld:
                 self._check_collisions(uav)
                 
         self.time += dt
+        
+        # Update terrain chunks around player
+        if self.player_uav_id and self.player_uav_id in self.uavs:
+             player = self.uavs[self.player_uav_id]
+             if not player.is_crashed:
+                 px, py, _ = player.state.position
+                 px, py, _ = player.state.position
+                 self.environment.update_chunks(px, py)
         self.stats['total_updates'] += 1
         
     def _check_collisions(self, uav: FixedWingUAV):
@@ -210,6 +218,8 @@ class SimulationWorld:
             })
             
         return states
+        
+
         
     def get_world_state(self) -> Dict:
         """Tüm dünya durumunu al"""

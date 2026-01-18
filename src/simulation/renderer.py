@@ -23,6 +23,9 @@ class Renderer:
         self.inset_height = 240
         self.inset_renderer = CameraInsetRenderer(self.inset_width, self.inset_height)
         
+        # Debug Inset (Same size)
+        self.debug_inset_renderer = CameraInsetRenderer(self.inset_width, self.inset_height)
+        
         # Cockpit HUD
         self.hud = HUD(width, height)
         self.show_cockpit = False
@@ -43,6 +46,11 @@ class Renderer:
         
         # Map renderer creates the display, so we pass that surface
         self.inset_renderer.init(self.map_renderer.screen, inset_x, inset_y)
+        
+        # Debug Inset: Bottom Left
+        debug_x = margin
+        debug_y = self.height - self.inset_height - margin
+        self.debug_inset_renderer.init(self.map_renderer.screen, debug_x, debug_y)
         
     def close(self):
         """Cleanup"""
@@ -79,7 +87,7 @@ class Renderer:
         
     def render(self, world_state, lock_state, sim_time=0.0, scenario="", seed=0,
                camera_frame=None, detections=None, tracks=None, observer_target_id=None,
-               is_paused=False, gl_frame=None, inset_frame=None):
+               is_paused=False, gl_frame=None, inset_frame=None, debug_camera_frame=None):
 
         """
         Render the complete UI.
@@ -149,6 +157,12 @@ class Renderer:
                 inset_frame = np.zeros((480, 640, 3), dtype=np.uint8)
                 
             self.inset_renderer.render(inset_frame, detections or [], tracks or [], lock_state, self.ui_mode)
+            
+            # 3. Render Debug Inset (Bottom Left)
+            if debug_camera_frame is not None:
+                # Debug camera usually raw, no HUD? Or minimal?
+                # Passing empty detections/tracks for now to keep it clean
+                self.debug_inset_renderer.render(debug_camera_frame, [], [], None, self.ui_mode)
             
             # Help text
             font = self.map_renderer.font_small

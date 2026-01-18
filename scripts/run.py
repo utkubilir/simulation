@@ -143,6 +143,17 @@ class SimulationRunner:
             self.autopilot = Autopilot()
 
             ui_config = config.get('ui', {})
+            
+            # Debug Camera (Bottom-Left, 45 deg down)
+            debug_cam_config = camera_config.copy()
+            debug_cam_config.update({
+                'mount_pitch': -45.0,
+                'mount_offset': [0.0, 0.0, 0.2], # Under the UAV
+                'resolution': (320, 240)
+            })
+            initial_pos = [0, 0, -100]
+            self.debug_camera = SimulatedCamera(initial_pos, debug_cam_config)
+
             if ui_config.get('gl_view', False) or ui_config.get('gl_view_inset', False):
                 try:
                     from src.simulation.gl_world_viewer import GLWorldViewer
@@ -371,6 +382,10 @@ class SimulationRunner:
             })
             arena = TeknofestArena(arena_config)
             self.camera.set_arena(arena)
+            
+            if self.debug_camera:
+                self.debug_camera.set_environment(self.world.environment)
+                self.debug_camera.set_arena(arena)
         
         print("✅ World Ready. Starting loop...")
         
@@ -533,6 +548,15 @@ class SimulationRunner:
                 view_uav.get_position(),
                 view_uav.get_orientation()
             )
+            
+            # Update Debug Camera
+            if hasattr(self, 'debug_camera') and self.debug_camera:
+                self.debug_camera.update(dt, view_uav.state.velocity)
+                # Debug camera always follows player/view_uav
+                self.debug_cam_pos, self.debug_cam_orient = self.debug_camera.get_camera_pose(
+                    view_uav.get_position(),
+                    view_uav.get_orientation()
+                )
         else:
             # Headless
             camera_pos = view_uav.get_camera_position()
@@ -552,6 +576,13 @@ class SimulationRunner:
             # DEBUG: Frame verification
             if self.frame_id % 60 == 0:
                 print(f"📷 Main Frame Mean: {frame.mean():.1f}")
+                
+            # Generate Debug Frame
+            debug_frame = None
+            if hasattr(self, 'debug_camera') and self.debug_camera:
+                debug_frame = self.debug_camera.generate_synthetic_frame(
+                    enemy_states, self.debug_cam_pos, self.debug_cam_orient, player.state.velocity
+                )
         else:
             # Headless mod için minimal frame
             frame = np.zeros((self.camera_resolution[1], self.camera_resolution[0], 3), dtype=np.uint8)
@@ -595,6 +626,8 @@ class SimulationRunner:
 
         # Store for rendering
         self._last_frame = frame
+        self._last_debug_frame = debug_frame if 'debug_frame' in locals() else None
+        self._last_detections = detections
         self._last_detections = detections
         self._last_tracks = tracks
         self._last_ad_result = ad_result
@@ -682,6 +715,7 @@ class SimulationRunner:
         detections = getattr(self, '_last_detections', [])
         tracks = getattr(self, '_last_tracks', [])
         frame = getattr(self, '_last_frame', None)
+        debug_frame = getattr(self, '_last_debug_frame', None)
         gl_frame = None
         inset_frame = frame
         ui_config = self.config.get('ui', {})
@@ -708,7 +742,8 @@ class SimulationRunner:
             observer_target_id=self.camera_target_id,
             is_paused=self.world.is_paused,
             gl_frame=gl_frame,
-            inset_frame=inset_frame
+            inset_frame=inset_frame,
+            debug_camera_frame=debug_frame
         )
 
 

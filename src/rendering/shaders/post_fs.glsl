@@ -109,8 +109,8 @@ void main() {
 
     // --- NEW EFFECTS ---
 
-    // 1. Film Grain / Noise
-    float noise = rand(dist_uv + time) * noiseStrength;
+    // 1. Film Grain / Noise (Centered)
+    float noise = (rand(dist_uv + time) - 0.5) * noiseStrength;
     color += noise;
 
     // 2. Vignette
@@ -123,7 +123,8 @@ void main() {
     color = aces_tone_mapping(color);
 
     // Gamma Correction (Linear -> SRGB)
-    color = pow(color, vec3(1.0/2.2));
+    // DISABLED: Double gamma applied elsewhere or pipeline is not linear enough
+    // color = pow(color, vec3(1.0/2.2));
     
     f_color = vec4(color, 1.0);
 }

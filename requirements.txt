@@ -5,3 +5,5 @@ pyyaml
 panda3d
 ultralytics
 pytest
+moderngl
+pyrr

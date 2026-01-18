@@ -33,9 +33,9 @@ void main() {
         // -d.z is 1.0 (Zenith), 0.0 (Horizon), -1.0 (Nadir) assuming Up is -Z
         float elevation = -d.z;
         
-        vec3 horizonColor = vec3(0.6, 0.7, 0.9);   // Hazy blue/white
-        vec3 zenithColor = vec3(0.1, 0.4, 0.8);    // Deep blue
-        vec3 groundColor = vec3(0.3, 0.3, 0.3);    // Dark grey for bottom
+        vec3 horizonColor = vec3(0.4, 0.5, 0.7);   // Matches terrain haze
+        vec3 zenithColor = vec3(0.1, 0.3, 0.6);    // Deep blue
+        vec3 groundColor = vec3(0.2, 0.2, 0.2);    // Darker bottom fallback
         
         vec3 skyColor;
         if (elevation > 0.0) {

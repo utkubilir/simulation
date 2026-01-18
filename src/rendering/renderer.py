@@ -23,6 +23,7 @@ class GLRenderer:
         # OpenGL Ayarları
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        self.ctx.disable(moderngl.CULL_FACE) # Disable culling (terrain matrix flip inverts winding)
 
         self.width = width
         self.height = height
@@ -149,7 +150,7 @@ class GLRenderer:
         self.prog_blur = self._load_program('screen_vs.glsl', 'blur_fs.glsl')
         self.prog_bloom_combine = self._load_program('screen_vs.glsl', 'bloom_combine_fs.glsl')
         
-        self.bloom_enabled = True
+        self.bloom_enabled = False
         self.bloom_intensity = 0.3
         self.bloom_threshold = 0.8
         
@@ -157,7 +158,7 @@ class GLRenderer:
         self.shadow_res = 2048
         self.tex_shadow = self.ctx.depth_texture((self.shadow_res, self.shadow_res))
         self.tex_shadow.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        self.tex_shadow.compare_func = '>' # Needed for shadow comparison? Usually '' or 'func'
+        # self.tex_shadow.compare_func = '>' # Remove this, we read raw depth in shader manually
         # ModernGL depth sampling defaults to (D < R ? 1 : 0) if compare_func set?
         # Let's keep default and use sampler2DShadow in GLSL or standard sampler2D.
         # Im using sampler2D in shader with custom comparison.
@@ -493,20 +494,25 @@ class GLRenderer:
             # Col 1: (0, 0, -1) -> Sim Y maps to GL -Z
             # Col 2: (0, 1, 0) -> Sim Z maps to GL Y
             
-            rot = np.array([
-                [1, 0, 0, 0],
-                [0, 0, -1, 0],
-                [0, 1, 0, 0],
-                [0, 0, 0, 1]
-            ], dtype='f4')
+            # Correct Transformation for Y-Up Mesh to Sim Coordinates
+            # Sim (ox, oy) -> GL (ox, -oy)
+            # Mesh (x, h, z) -> (x, h, -z) to match Sim Y->GL -Z
             
-            # Combine: Translate * Rotate * Vertex? Or Rotate * Translate?
-            # Vertex is local (0..chunk_size). 
-            # We want to move it to (ox, oy) then rotate?
-            # No, if we rotate, (x, y, z) becomes (x, z, -y).
-            # Then we add offset (ox, 0, -oy).
+            # 1. Scale Z by -1 (Flip Z because Sim North is -Z in GL)
+            # AND shift by Chunk Size? Mesh is 0..Width, 0..Depth.
+            # If we flip Z, it becomes 0..-Depth. This matches 0..North mapping to 0..-Z.
+            # So just Scale(1, 1, -1) is correct.
+            scale = pyrr.matrix44.create_from_scale([1.0, 1.0, -1.0], dtype='f4')
             
-            model = pyrr.matrix44.multiply(rot, trans)
+            # 2. Translate to origin
+            # Sim Origin (ox, oy). GL X=ox. GL Z=-oy.
+            # BUT Mesh 0..Depth (Sim Y) maps to 0..-Depth (GL Z).
+            # If Sim Chunk starts at oy=0, it goes 0..Size.
+            # GL Chunk should start at 0, go to -Size.
+            # So translation is (ox, 0, -oy).
+            trans = pyrr.matrix44.create_from_translation([ox, 0, -oy], dtype='f4')
+            
+            model = pyrr.matrix44.multiply(scale, trans)
             
             prog['m_model'].write(model.tobytes())
             
@@ -856,8 +862,8 @@ class GLRenderer:
         texture_data = np.clip(final_color, 0, 255).astype(np.uint8)
         
         self.tex_terrain = self.ctx.texture((size, size), 3, texture_data.tobytes())
-        self.tex_terrain.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
-        self.tex_terrain.build_mipmaps()
+        self.tex_terrain.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        # self.tex_terrain.build_mipmaps()
     def _is_in_frustum(self, position, radius=50.0):
         """Basit frustum culling: Obje kamera görüş alanında mı?"""
         cam_pos = np.array(self.camera.position)
@@ -957,12 +963,20 @@ class GLRenderer:
         Args:
             shadow_pass: If True, renders for shadow map (depth only).
         """
+        # print("DEBUG: render_environment")
         # Select shader program for shadow pass
         program = self.prog_shadow if shadow_pass else None
         
         if not shadow_pass:
             # 1. Skybox (No shadows for sky)
             self.render_sky()
+            
+            # Bind Terrain Texture (Unit 1)
+            if hasattr(self, 'tex_terrain'):
+                self.tex_terrain.use(location=1)
+                # Ensure program knows it uses unit 1
+                if not program:
+                    self.prog_terrain['u_texture'] = 1
         
         # 2. Terrain (Chunk-based veya static)
         if hasattr(self, '_chunk_vaos') and self._chunk_vaos:
@@ -1013,12 +1027,18 @@ class GLRenderer:
         
         # 1. Main Pass
         self.fbo.use()
-        self.ctx.clear(0.53, 0.81, 0.92)  # Sky Blue Background
+        self.ctx.clear(0.4, 0.5, 0.7)  # Matching Sky/Fog Color
         self.ctx.enable(moderngl.DEPTH_TEST)
         
         # Bind Shadow Map
         self.tex_shadow.use(location=5)
+        
+        # DEBUG: Bind dummy texture to Unit 0 to prevent "UNSUPPORTED" error
+        self.tex_sky.use(location=0)
+        
         self.prog_aircraft['shadowMap'] = 5
+        self.prog_instanced['shadowMap'] = 5
+        self.prog_terrain['shadowMap'] = 5
         
         # Environment rendering (terrain + objects) - Skybox/Ground texture yerine
         # Always render sky first (with procedural fallback if texture unavailable)

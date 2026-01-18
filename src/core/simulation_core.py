@@ -102,7 +102,7 @@ class SimulationCore:
             'time_scale': 1.0
         })
         
-        self.camera = SimulatedCamera({
+        self.camera = SimulatedCamera([0, 0, 0], {
             'fov': config.camera_fov,
             'resolution': list(config.camera_resolution),
             'fps': config.perception_fps

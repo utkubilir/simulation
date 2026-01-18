@@ -501,6 +501,7 @@ class Autopilot:
 
             if heading is not None or altitude is not None or speed is not None:
                 return self._heading_hold(
+                    uav_state,
                     uav_state['altitude'],
                     uav_state['speed'],
                     np.radians(uav_state['heading']),

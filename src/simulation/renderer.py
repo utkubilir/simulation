@@ -26,6 +26,7 @@ class Renderer:
         # Cockpit HUD
         self.hud = HUD(width, height)
         self.show_cockpit = False
+        self.show_gl_world = False
         
         self.clock = None
         
@@ -56,6 +57,8 @@ class Renderer:
             if e['type'] == 'keydown':
                 if e['key'] == 'tab':
                     self.show_cockpit = not self.show_cockpit
+                elif e['key'] == 'g':
+                    self.show_gl_world = not self.show_gl_world
                 elif e['key'] == '[':
                     e['cmd'] = 'prev_uav'
                 elif e['key'] == ']':
@@ -77,7 +80,8 @@ class Renderer:
         self.map_renderer.set_camera(x, y)
         
     def render(self, world_state, lock_state, sim_time=0.0, scenario="", seed=0,
-               camera_frame=None, detections=None, tracks=None, observer_target_id=None, is_paused=False):
+               camera_frame=None, detections=None, tracks=None, observer_target_id=None,
+               is_paused=False, gl_frame=None):
         """
         Render the complete UI.
         """
@@ -114,6 +118,26 @@ class Renderer:
             txt = font.render(f"FPS: {fps:.1f} | COCKPIT | {target_text} | {self.ui_mode.name}", True, (200, 255, 200))
             screen.blit(txt, (10, 10))
             
+        elif self.show_gl_world and gl_frame is not None:
+            # === 3D WORLD MODE ===
+            frame_surf = pygame.surfarray.make_surface(gl_frame.swapaxes(0, 1))
+            frame_surf = pygame.transform.scale(frame_surf, (self.width, self.height))
+            screen.blit(frame_surf, (0, 0))
+
+            font = self.map_renderer.font_small
+            fps = self.clock.get_fps()
+            txt = font.render(
+                f"FPS: {fps:.1f} | 3D WORLD | {target_text} | {self.ui_mode.name}",
+                True,
+                (200, 255, 200),
+            )
+            screen.blit(txt, (10, 10))
+            help_txt = font.render(
+                "TAB: Cockpit View | G: 2D Map | SPACE: Pause | R: Restart",
+                True,
+                (220, 220, 220),
+            )
+            screen.blit(help_txt, (10, 30))
         else:
             # === MAP MODE ===
             
@@ -129,7 +153,11 @@ class Renderer:
             
             # Help text
             font = self.map_renderer.font_small
-            txt = font.render(f"TAB: Cockpit View | SPACE: Pause | R: Restart | {target_text}", True, (200, 200, 200))
+            txt = font.render(
+                f"TAB: Cockpit View | G: 3D World | SPACE: Pause | R: Restart | {target_text}",
+                True,
+                (200, 200, 200),
+            )
             screen.blit(txt, (self.width - 450, 10))
             
         # Draw Pause Overlay

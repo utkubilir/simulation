@@ -122,38 +122,9 @@ class Terrain:
         self.heightmap = (valley + noise) * self.max_height
     
     def get_height_at(self, x: float, y: float) -> float:
-        """
-        Belirli dünya koordinatındaki yüksekliği al.
-        
-        Args:
-            x, y: Dünya koordinatları (metre)
-            
-        Returns:
-            Terrain yüksekliği (metre)
-        """
-        # Dünya koordinatlarını heightmap indekslerine çevir
-        u = x / self.size[0] * self.resolution
-        v = y / self.size[1] * self.resolution
-        
-        # Sınır kontrolü
-        u = np.clip(u, 0, self.resolution - 1)
-        v = np.clip(v, 0, self.resolution - 1)
-        
-        # Bilinear interpolation
-        u0, v0 = int(u), int(v)
-        u1, v1 = min(u0 + 1, self.resolution - 1), min(v0 + 1, self.resolution - 1)
-        
-        fu, fv = u - u0, v - v0
-        
-        h00 = self.heightmap[v0, u0]
-        h10 = self.heightmap[v0, u1]
-        h01 = self.heightmap[v1, u0]
-        h11 = self.heightmap[v1, u1]
-        
-        h0 = h00 * (1 - fu) + h10 * fu
-        h1 = h01 * (1 - fu) + h11 * fu
-        
-        return h0 * (1 - fv) + h1 * fv
+        """WorldMap'ten kesin yüksekliği al"""
+        from src.simulation.map_data import WorldMap
+        return WorldMap.get_terrain_height(x, y)
     
     def get_normal_at(self, x: float, y: float) -> np.ndarray:
         """Terrain normal vektörünü hesapla"""
@@ -190,36 +161,35 @@ class Environment:
             self._spawn_default_objects(config)
     
     def _spawn_default_objects(self, config: dict):
-        """Varsayılan dünya nesnelerini spawn et"""
+        """WorldMap.STATIC_OBJECTS kullanarak nesneleri spawn et"""
+        from src.simulation.map_data import WorldMap
+        
+        # MapData'daki statik nesneleri yükle
+        for obj in WorldMap.STATIC_OBJECTS:
+            if obj.obj_type == "building":
+                self.spawn_building(
+                    position=list(obj.position),
+                    size=obj.size,
+                    rotation=obj.rotation
+                )
+            # Ağaçlar vb. eklenebilir
+        
+        # Şimdilik ağaçlar MapData'da yoksa rastgele ekle (Görsel zenginlik için)
+        # Ancak ideal olan MapData'ya taşımaktır.
         np.random.seed(config.get('seed', 42))
-        
-        # Binalar (dünya merkezine yakın)
-        num_buildings = config.get('num_buildings', 5)
-        for i in range(num_buildings):
-            x = np.random.uniform(600, 1400)
-            y = np.random.uniform(600, 1400)
-            z = self.terrain.get_height_at(x, y)
-            
-            width = np.random.uniform(20, 50)
-            height = np.random.uniform(30, 80)
-            depth = np.random.uniform(20, 50)
-            
-            self.spawn_building(
-                position=[x, y, z],
-                size=(width, height, depth),
-                rotation=np.random.uniform(0, np.pi * 2)
-            )
-        
-        # Ağaçlar (dağınık)
-        num_trees = config.get('num_trees', 20)
+        num_trees = config.get('num_trees', 50)
         for i in range(num_trees):
             x = np.random.uniform(100, 1900)
             y = np.random.uniform(100, 1900)
-            z = self.terrain.get_height_at(x, y)
             
+            # Pist üzerine ağaç koyma (Basit kontrol)
+            if 1300 < x < 1700 and 1300 < y < 1700:
+                continue
+
+            z = self.terrain.get_height_at(x, y)
             self.spawn_tree(
                 position=[x, y, z],
-                scale=np.random.uniform(0.5, 1.5)
+                scale=np.random.uniform(0.8, 1.2)
             )
     
     def spawn_building(self, position: List[float], 

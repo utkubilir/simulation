@@ -404,16 +404,22 @@ class ImageBasedDetector:
         detections.sort(key=lambda d: d.confidence, reverse=True)
         
         kept = []
-        while detections:
-            best = detections.pop(0)
-            kept.append(best)
+        suppressed = [False] * len(detections)
+
+        for i in range(len(detections)):
+            if suppressed[i]:
+                continue
             
-            # Çakışanları kaldır
-            detections = [
-                d for d in detections
-                if self._calculate_iou(best.bbox, d.bbox) < iou_threshold
-            ]
+            kept.append(detections[i])
             
+            for j in range(i + 1, len(detections)):
+                if suppressed[j]:
+                    continue
+
+                iou = self._calculate_iou(detections[i].bbox, detections[j].bbox)
+                if iou >= iou_threshold:
+                    suppressed[j] = True
+
         return kept
         
     @staticmethod

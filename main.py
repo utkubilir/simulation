@@ -67,6 +67,8 @@ def main():
                 'mode': launcher_config['mode'],
                 'run_id': None
             }
+            config.setdefault('ui', {})
+            config['ui'].setdefault('gl_view_inset', True)
             # Update running mode based on launcher selection
             # We need to pass this mode to SimulationRunner
             
@@ -91,6 +93,8 @@ def main():
             'seed': 42, # Default seed for main.py users
             'run_id': args.run_id
         }
+        config.setdefault('ui', {})
+        config['ui'].setdefault('gl_view_inset', True)
         
         # Overrides from CLI
         if args.uav_count is not None:

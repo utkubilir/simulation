@@ -92,6 +92,7 @@ class GLWorldViewer:
 
         for uav_id, uav in uavs.items():
             pos = np.array(uav.get("position", [0.0, 0.0, 0.0]), dtype=np.float32)
+            gl_pos = self._sim_to_gl(pos)
             orientation = uav.get("orientation") or [0.0, 0.0, np.radians(uav.get("heading", 0.0))]
             roll, pitch, yaw = orientation
 
@@ -106,6 +107,7 @@ class GLWorldViewer:
                 color = (0.8, 0.8, 0.8)
 
             self.renderer.render_aircraft(
+                position=gl_pos,
                 position=pos,
                 heading=yaw,
                 roll=roll,

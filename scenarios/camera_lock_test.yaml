@@ -41,7 +41,7 @@ camera:
   fov: 60
   width: 640
   height: 480
-  mount_pitch: 0
+  mount_pitch: -30
   shake_enabled: false
   shake_intensity: 0.0
 

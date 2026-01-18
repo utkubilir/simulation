@@ -84,8 +84,8 @@ class FixedCamera:
         self.mount_offset = np.array(mount_offset)
         
         # Sabit montaj açısı (kameranın İHA'ya göre pitch açısı)
-        # Negatif = aşağı bakış
-        self.mount_pitch = np.radians(config.get('mount_pitch', -5.0))
+        # Negatif = aşağı bakış (daha büyük negatif = daha fazla aşağı)
+        self.mount_pitch = np.radians(config.get('mount_pitch', -30.0))
         
         # Lens distorsiyon parametreleri (Brown-Conrady model)
         self.distortion_enabled = config.get('distortion_enabled', True)
@@ -319,6 +319,23 @@ class FixedCamera:
                 self._environment_initialized = True
             except Exception as e:
                 print(f"Failed to initialize environment in renderer: {e}")
+    
+    def set_arena(self, arena):
+        """
+        Kamera için arena referansını ayarla.
+        OpenGL renderer varsa GPU kaynaklarını hazırlar.
+        
+        Args:
+            arena: TeknofestArena objesi (sınırlar, safe zones, markers)
+        """
+        self._arena = arena
+        
+        # OpenGL Renderer varsa arena'yı initialize et
+        if self.renderer and arena:
+            try:
+                self.renderer.init_arena(arena)
+            except Exception as e:
+                print(f"Failed to initialize arena in renderer: {e}")
         
     def update(self, dt: float, uav_velocity: np.ndarray = None):
         """
@@ -728,7 +745,22 @@ class FixedCamera:
             
             # --- MAIN PASS ---
             # 1. Kamera Güncelle (environment rendering için önce yapılmalı)
-            self.renderer.update_camera(position=camera_pos, rotation=camera_orient)
+            # Apply mount_pitch offset to camera orientation (UAV'a göre aşağı bakış)
+            adjusted_orient = np.array(camera_orient, dtype=np.float32).copy()
+            adjusted_orient[1] += self.mount_pitch  # pitch'e ekle (radyan)
+            
+            # Coordinate Swap for GL (Sim Z=Altitude -> GL Y=Up)
+            # Sim: [X, Y, Altitude] -> GL: [X, Altitude, Y] (assuming Y is depth)
+            # Note: Checking debug results, [500, 200, 500] worked where Y=200 was altitude.
+            # So GL expects [X, Height, Depth].
+            # Sim input is likely [X, Y, Height] or [X, Y, Z].
+            # We map Sim [0] -> GL X, Sim [2] -> GL Y, Sim [1] -> GL Z.
+            gl_camera_pos = np.array([camera_pos[0], camera_pos[2], camera_pos[1]], dtype=np.float32)
+            
+            # Debug override
+            # gl_camera_pos = np.array([500.0, 200.0, 500.0], dtype=np.float32)
+
+            self.renderer.update_camera(position=gl_camera_pos, rotation=adjusted_orient)
             
             # 2. Sahne Başlat (environment + sky rendering)
             self.renderer.begin_frame()

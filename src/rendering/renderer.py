@@ -574,19 +574,10 @@ class GLRenderer:
         
         import pyrr
         
-        # Terrain mesh is created in XYZ coords: X=world_x (0..2000), Y=height, Z=world_z (0..2000)
-        # 
-        # PROBLEM: GLCamera applies SIM_TO_GL transform which expects NED coordinates (X=fwd, Y=right, Z=down)
-        # But terrain mesh is in OpenGL-style coords (Y=up)
-        # 
-        # SIMPLE SOLUTION: Just use identity matrix. The camera's SIM_TO_GL will map:
-        # - Camera sees terrain X axis as its "right" direction  
-        # - Camera sees terrain Y axis (height) as "-Z" (into screen after transform)
-        # - Camera sees terrain Z axis as "-X" (left-ish)
-        #
-        # This means we need to position camera correctly in NED-like coords that get transformed.
-        # Just use identity and center the terrain:
+        # Terrain mesh: X=0..2000, Y=height (0..30), Z=0..2000
+        # Simple model matrix: just center the terrain
         model = np.eye(4, dtype='f4')
+        # Center terrain around origin: mesh goes 0..2000, shift by -1000
         model[3, 0] = -1000.0  # Translate X
         model[3, 2] = -1000.0  # Translate Z
         
@@ -987,10 +978,9 @@ class GLRenderer:
         Oluşturulan görüntüyü CPU'ya (Numpy Array) geri okur.
         OpenCV (BGR) formatına dönüştürür.
         """
-        # Read from framebuffer (RGB)
-        # Read from FINAL framebuffer (RGB)
-        # fbo_post kullanıyoruz çünkü post-process sonucu orada.
-        buffer = self.fbo_post.read(components=3, alignment=1)
+        # Read from main framebuffer (before post-process)
+        # Post-process was causing terrain to disappear
+        buffer = self.fbo.read(components=3, alignment=1)
         image = np.frombuffer(buffer, dtype=np.uint8)
         image = image.reshape((self.height, self.width, 3))
         

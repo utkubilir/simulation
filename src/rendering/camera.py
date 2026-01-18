@@ -34,13 +34,14 @@ class GLCamera:
     - Dirty flag optimization
     """
     
-    # Coordinate system transformation matrix (Simulation NED → OpenGL)
-    # Sim: X=Forward, Y=Right, Z=Down
-    # GL:  X=Right, Y=Up, Z=-Forward
+    # Coordinate system transformation matrix
+    # NOTE: Terrain and world objects use standard OpenGL coordinates (X=Right, Y=Up, Z=-Forward)
+    # Setting this to Identity disables NED->OpenGL conversion.
+    # Camera rotations still work via standard Euler angles.
     SIM_TO_GL = np.array([
-        [0, 1, 0, 0],   # GL.X = Sim.Y
-        [0, 0, -1, 0],  # GL.Y = -Sim.Z
-        [-1, 0, 0, 0],  # GL.Z = -Sim.X
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
         [0, 0, 0, 1]
     ], dtype=np.float32)
     

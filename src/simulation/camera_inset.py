@@ -152,6 +152,10 @@ class CameraInsetRenderer:
             # Dark background placeholder
             self.surface.fill((30, 30, 40))
             return
+        
+        # BGR -> RGB dönüşümü (OpenGL/OpenCV BGR, Pygame RGB bekliyor)
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            frame = frame[..., ::-1].copy()
             
         # Convert numpy array to pygame surface
         # Resize if needed

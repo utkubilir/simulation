@@ -26,6 +26,8 @@ def main():
                        help='Harici YOLO model dosyası')
     parser.add_argument('--run-id', type=str, default=None,
                         help='Run ID')
+    parser.add_argument('--duration', '-d', type=float,
+                        help='Simülasyon süresi (saniye)')
     
     args = parser.parse_args()
     
@@ -95,6 +97,9 @@ def main():
         if args.model:
             print("⚠️  UYARI: vNext simülasyonu deterministik 'SimulationDetector' kullanır.")
             print("    '--model' argümanı yoksayılacak (sentetik tespitler kullanılacak).")
+            
+        if args.duration:
+            config['duration'] = args.duration
         
     # Run with configured mode (default UI)
     run_mode = config.get('mode', 'ui')

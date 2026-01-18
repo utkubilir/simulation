@@ -86,6 +86,64 @@ class WorldExplorer(SimulationRunner):
                 player.get_orientation(),
                 player.state.velocity
             )
+            
+            # Debug: Frame içeriğini kontrol et
+            if self.frame_id % 60 == 0:
+                import numpy as np
+                mean = np.mean(self._last_frame) if self._last_frame is not None else 0
+                print(f"    📷 Frame Mean: {mean:.1f} | Shape: {self._last_frame.shape if self._last_frame is not None else 'None'}")
+    
+    def _run_ui(self):
+        """Override: renderer.init() sonrası environment/arena bağla"""
+        print(f"\n{'='*50}")
+        print(f"🎮 TEKNOFEST Savaşan İHA Sim vNext")
+        print(f"{'='*50}")
+        print(f"  Scenario: {self.scenario} | Seed: {self.seed}")
+        print(f"  P: Toggle Autopilot | ESC: Exit")
+        print(f"{'='*50}\n")
+        
+        print("⏳ Initializing Graphics Engine...")
+        self.renderer.init()
+        print("✅ Graphics Initialized.")
+        
+        # --- KRITIK: renderer.init() SONRASI environment/arena bağla ---
+        from src.simulation.arena import TeknofestArena
+        
+        if self.camera and hasattr(self.world, 'environment'):
+            print("🌍 Initializing Environment (terrain, objects)...")
+            self.camera.set_environment(self.world.environment)
+        
+        arena = TeknofestArena({
+            'width': 500.0,
+            'depth': 500.0,
+            'min_altitude': 10.0,
+            'max_altitude': 150.0,
+            'safe_zone_size': 50.0
+        })
+        if self.camera:
+            print("🏟️ Initializing Arena (markers, safe zones)...")
+            self.camera.set_arena(arena)
+        
+        print("✅ World Ready. Starting loop...")
+        
+        dt = 1.0 / 60.0
+        
+        try:
+            while self.running:
+                self._handle_events()
+                self._step(dt)
+                self._render()
+                self.sim_time += dt
+                self.frame_id += 1
+                
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            import traceback
+            print(f"\n❌ Simulation Crashed: {e}")
+            traceback.print_exc()
+        finally:
+            self.renderer.close()
 
 if __name__ == "__main__":
     # Senaryo yükle
@@ -120,9 +178,8 @@ if __name__ == "__main__":
     explorer = WorldExplorer(config)
     explorer.setup_scenario()
     
-    # Environment bağlantısını kesinleştir
-    if explorer.camera and hasattr(explorer.world, 'environment'):
-         explorer.camera.set_environment(explorer.world.environment)
+    # Environment ve arena bağlantıları artık _run_ui() içinde yapılıyor
+    # (renderer.init() sonrası)
          
     explorer.running = True  # Initialize running state
     explorer._run_ui()

@@ -266,10 +266,6 @@ class SimulationRunner:
         self.running = True
         self.setup_scenario()
         
-        # Environment'ı kameraya aktar (terrain, binalar vb. render için)
-        if self.camera and hasattr(self.world, 'environment'):
-            self.camera.set_environment(self.world.environment)
-        
         if self.mode == 'ui':
             self._run_ui()
         else:
@@ -314,7 +310,25 @@ class SimulationRunner:
         
         print("⏳ Initializing Graphics Engine...")
         self.renderer.init()
-        print("✅ Graphics Initialized. Starting loop...")
+        print("✅ Graphics Initialized.")
+        
+        # --- KRITIK: renderer.init() SONRASI environment/arena bağla ---
+        if self.camera and hasattr(self.world, 'environment'):
+            self.camera.set_environment(self.world.environment)
+        
+        if self.camera:
+            from src.simulation.arena import TeknofestArena
+            arena_config = self.config.get('arena', {
+                'width': 500.0,
+                'depth': 500.0,
+                'min_altitude': 10.0,
+                'max_altitude': 150.0,
+                'safe_zone_size': 50.0
+            })
+            arena = TeknofestArena(arena_config)
+            self.camera.set_arena(arena)
+        
+        print("✅ World Ready. Starting loop...")
         
         dt = 1.0 / 60.0
         
@@ -486,6 +500,9 @@ class SimulationRunner:
             frame = self.camera.generate_synthetic_frame(
                 enemy_states, camera_pos, camera_orient, player.state.velocity
             )
+            # DEBUG: Frame verification
+            if self.frame_id % 60 == 0:
+                print(f"📷 Main Frame Mean: {frame.mean():.1f}")
         else:
             # Headless mod için minimal frame
             frame = np.zeros((self.camera_resolution[1], self.camera_resolution[0], 3), dtype=np.uint8)

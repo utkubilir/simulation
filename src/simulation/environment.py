@@ -59,67 +59,17 @@ class Terrain:
         # Texture ayarları
         self.texture_scale = config.get('texture_scale', 50.0)
         
-        # Heightmap (başlangıçta düz)
-        self.heightmap = np.zeros((self.resolution, self.resolution), dtype=np.float32)
+        # Texture ayarları
+        self.texture_scale = config.get('texture_scale', 50.0)
         
-        # Terrain tipi
-        terrain_type = config.get('type', 'flat')
-        if terrain_type == 'flat':
-            self.generate_flat()
-        elif terrain_type == 'hills':
-            self.generate_hills(config.get('seed', 42))
-        elif terrain_type == 'valley':
-            self.generate_valley(config.get('seed', 42))
+        # Legacy Heightmap removed for Infinite World optimization
+        # self.heightmap = ...
+        
+        # Terrain now acts purely as a wrapper for WorldMap
     
-    def generate_flat(self):
-        """Düz zemin oluştur"""
-        self.heightmap[:] = 0.0
+    # Removed _generate_from_worldmap as it created a large unused array
     
-    def generate_hills(self, seed: int = 42):
-        """
-        Tepelik arazi oluştur (Perlin noise benzeri).
-        
-        Args:
-            seed: Random seed
-        """
-        np.random.seed(seed)
-        
-        # Multi-octave noise for natural looking terrain
-        result = np.zeros((self.resolution, self.resolution))
-        
-        for octave in range(4):
-            freq = 2 ** octave
-            amplitude = 1.0 / freq
-            
-            # Simple noise interpolation
-            noise_size = max(4, self.resolution // (2 ** (3 - octave)))
-            noise = np.random.rand(noise_size, noise_size)
-            
-            # Bilinear upscale
-            from scipy.ndimage import zoom
-            scaled = zoom(noise, self.resolution / noise_size, order=1)
-            
-            result += scaled[:self.resolution, :self.resolution] * amplitude
-        
-        # Normalize to height range
-        result = (result - result.min()) / (result.max() - result.min() + 1e-6)
-        self.heightmap = result * (self.max_height - self.min_height) + self.min_height
-    
-    def generate_valley(self, seed: int = 42):
-        """Vadi oluştur (ortası düşük, kenarlar yüksek)"""
-        np.random.seed(seed)
-        
-        x = np.linspace(-1, 1, self.resolution)
-        y = np.linspace(-1, 1, self.resolution)
-        xx, yy = np.meshgrid(x, y)
-        
-        # Parabolik vadi
-        valley = (xx ** 2 + yy ** 2) * 0.5
-        
-        # Biraz noise ekle
-        noise = np.random.rand(self.resolution, self.resolution) * 0.1
-        
-        self.heightmap = (valley + noise) * self.max_height
+    # Legacy terrain generation methods removed - now using WorldMap SSOT
     
     def get_height_at(self, x: float, y: float) -> float:
         """WorldMap'ten kesin yüksekliği al"""
@@ -144,6 +94,7 @@ class Environment:
     Simülasyon dünyası environment'ı.
     
     Terrain ve tüm statik nesneleri yönetir.
+    Sonsuz dünya için ChunkManager entegrasyonu.
     """
     
     def __init__(self, config: dict = None):
@@ -153,12 +104,29 @@ class Environment:
         terrain_config = config.get('terrain', {'type': 'flat'})
         self.terrain = Terrain(terrain_config)
         
+        # Chunk Manager (sonsuz dünya için)
+        from src.simulation.world_chunks import ChunkManager
+        chunk_config = config.get('chunks', {})
+        self.chunk_manager = ChunkManager(
+            chunk_size=chunk_config.get('chunk_size', 500.0),
+            view_distance=chunk_config.get('view_distance', 3),
+            chunk_resolution=chunk_config.get('resolution', 32),
+            seed=config.get('seed', 42)
+        )
+        
         # World objects
         self.objects: List[WorldObject] = []
         
         # Auto-spawn settings
         if config.get('auto_spawn', True):
             self._spawn_default_objects(config)
+    
+    def update_chunks(self, player_x: float, player_y: float):
+        """
+        Oyuncu pozisyonuna göre chunk'ları güncelle.
+        Her frame çağrılmalı.
+        """
+        return self.chunk_manager.update(player_x, player_y)
     
     def _spawn_default_objects(self, config: dict):
         """WorldMap.STATIC_OBJECTS kullanarak nesneleri spawn et"""

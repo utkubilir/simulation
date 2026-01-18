@@ -56,13 +56,25 @@ class CameraInsetRenderer:
     def render(self, camera_frame: np.ndarray, detections: List[Dict], 
                tracks: List, lock_state: Dict, ui_mode: UIMode = UIMode.COMPETITION):
         """Render the camera inset"""
+        # Calculate scale factors based on actual frame size if available
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        
+        has_frame = camera_frame is not None and camera_frame.size > 0
+        
+        if has_frame:
+            # frame shape: (H, W, 3)
+            fh, fw = camera_frame.shape[:2]
+            self.scale_x = self.width / fw
+            self.scale_y = self.height / fh
+            
         # Draw background (camera frame)
         self._draw_camera_frame(camera_frame)
         
         # Part A: Draw synthetic target shapes (projected locations)
-        # Since detections are derived from perfect projection in SimulationDetector,
-        # we can use detection centers as the "synthetic view" of the targets.
-        self._draw_synthetic_targets(detections)
+        # ONLY if we don't have a camera frame (Sim-only mode)
+        if not has_frame:
+            self._draw_synthetic_targets(detections)
         
         # Draw detections/tracks
         self._draw_detections(detections, tracks, lock_state, ui_mode)
@@ -83,8 +95,8 @@ class CameraInsetRenderer:
     def _draw_synthetic_targets(self, detections: List[Dict]):
         """Draw realistic UAV silhouettes for targets"""
         # Scale factor
-        scale_x = self.width / 640
-        scale_y = self.height / 480
+        scale_x = getattr(self, 'scale_x', 1.0)
+        scale_y = getattr(self, 'scale_y', 1.0)
         
         for det in detections:
             center = det.get('center')
@@ -147,36 +159,54 @@ class CameraInsetRenderer:
                            (cx - body_w, cy - body_h, body_w * 2, body_h * 2), 1)
 
     def _draw_camera_frame(self, frame: np.ndarray):
-        """Draw the camera frame as background"""
+        """Draw the camera frame as background (Optimized)"""
         if frame is None or frame.size == 0:
             # Dark background placeholder
             self.surface.fill((30, 30, 40))
             return
         
-        # BGR -> RGB dönüşümü (OpenGL/OpenCV BGR, Pygame RGB bekliyor)
-        if len(frame.shape) == 3 and frame.shape[2] == 3:
-            frame = frame[..., ::-1].copy()
+        try:
+            fh, fw = frame.shape[:2]
             
-        # Convert numpy array to pygame surface
-        # Resize if needed
-        if frame.shape[:2] != (self.height, self.width):
-            # Simple resize using pygame
-            frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            frame_surface = pygame.transform.scale(frame_surface, (self.width, self.height))
-        else:
-            frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            # Assuming frame is BGR (standard OpenCV/GL read), convert to RGB for Pygame
+            # [..., ::-1] creates a view with negative strides. .tobytes() handles the copy.
+            rgb_data = frame[..., ::-1].tobytes()
             
-        self.surface.blit(frame_surface, (0, 0))
+            frame_surface = pygame.image.frombuffer(rgb_data, (fw, fh), 'RGB')
+            
+            if (fw, fh) != (self.width, self.height):
+                frame_surface = pygame.transform.scale(frame_surface, (self.width, self.height))
+                
+            self.surface.blit(frame_surface, (0, 0))
+            
+        except Exception as e:
+            print(f"Frame render error: {e}")
+            self.surface.fill((50, 0, 0))
         
     def _draw_detections(self, detections: List[Dict], tracks: List, lock_state: Dict, ui_mode: UIMode):
         """Draw compliantly: Detection (Yellow) -> Lock (Red)"""
         locked_id = lock_state.get('target_id') if lock_state else None
         
         # Scale factor if camera resolution differs from inset size
-        scale_x = self.width / 640
-        scale_y = self.height / 480
+        scale_x = getattr(self, 'scale_x', 1.0)
+        scale_y = getattr(self, 'scale_y', 1.0)
         
-        # 1. Draw all tracks as detections first (Yellow/White)
+        # 1. Draw raw detections (faint)
+        for det in detections:
+            bbox = det.get('bbox')
+            if not bbox: continue
+            
+            x1 = int(bbox[0] * scale_x)
+            y1 = int(bbox[1] * scale_y)
+            x2 = int(bbox[2] * scale_x)
+            y2 = int(bbox[3] * scale_y)
+            w = x2 - x1
+            h = y2 - y1
+            
+            # Faint yellow for raw detection
+            pygame.draw.rect(self.surface, (150, 150, 50), (x1, y1, w, h), 1)
+
+        # 2. Draw all tracks as detections first (Yellow/White)
         for track in tracks:
             # Normalize track data
             if hasattr(track, 'bbox'):

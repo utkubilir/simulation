@@ -30,7 +30,14 @@ class CameraConfig:
     
     # Montaj
     mount_offset: Tuple[float, float, float] = (0.3, 0.0, -0.1)  # İHA'ya göre offset
-    mount_pitch: float = -5.0      # Montaj pitch açısı (derece)
+    mount_pitch: float = -30.0     # Montaj pitch açısı (derece - aşağı bakmalı)
+    pitch_follow_factor: float = 0.3 # Horizon stabilization (0.0=tam stabilize, 1.0=uav takibi)
+
+    # Lens Distorsiyonu
+    k1: float = 0.0
+    k2: float = 0.0
+    p1: float = 0.0
+    p2: float = 0.0
     
     # Atmosfer
     visibility: float = 10000.0    # Görüş mesafesi (metre)
@@ -114,11 +121,14 @@ class CameraSimulation:
         camera_pos = uav_position + R @ mount_offset
         
         # Kamera oryantasyonu
+        # Horizon-Lock Stabilizasyonu: İHA'nın yalpalamasını filtreler
         mount_pitch_rad = np.radians(self.config.mount_pitch)
+        follow_factor = getattr(self.config, 'pitch_follow_factor', 0.3)
+        
         camera_orient = np.array([
-            roll,
-            pitch + mount_pitch_rad,
-            yaw
+            roll * follow_factor,            # Roll stabilizasyonu
+            pitch * follow_factor + mount_pitch_rad, # Pitch stabilizasyonu
+            yaw                              # Yaw tam takip eder
         ])
         
         return camera_pos, camera_orient

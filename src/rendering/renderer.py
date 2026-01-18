@@ -357,105 +357,8 @@ class GLRenderer:
         else: 
              self.vao_aircraft_instanced.render(moderngl.TRIANGLES, instances=count)
 
-    def render_aircraft(self, position, heading=0.0, roll=0.0, pitch=0.0, color=(1.0, 0.0, 0.0), program=None):
-        """
-        Belirtilen konumda bir uçak çiz.
-        Args:
-           program: Optional override shader (e.g. for shadow pass)
-        """
-        import pyrr
-        
-        # Model Matrisi
-        # Rotasyon sırası: Roll -> Pitch -> Yaw (Heading)
-        rot_r = pyrr.matrix44.create_from_x_rotation(roll, dtype='f4')
-        rot_p = pyrr.matrix44.create_from_y_rotation(pitch, dtype='f4')
-        rot_y = pyrr.matrix44.create_from_z_rotation(heading, dtype='f4')
-        
-        rot = pyrr.matrix44.multiply(rot_p, rot_r)
-        rot = pyrr.matrix44.multiply(rot_y, rot)
-        
-        # Translate
-        trans = pyrr.matrix44.create_from_translation(position, dtype='f4')
-        
-        model = pyrr.matrix44.multiply(rot, trans)
-        
-        prog = program if program else self.prog_aircraft
-        
-        if 'm_model' in prog:
-            prog['m_model'].write(model.tobytes())
-            
-        if program is None:
-            prog['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-            prog['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-            prog['u_color'].value = tuple(color)
-            if 'viewPos' in prog:
-                prog['viewPos'].value = tuple(self.camera.position)
-            if 'lightSpaceMatrix' in prog and hasattr(self, 'light_space_matrix'):
-                prog['lightSpaceMatrix'].write(self.light_space_matrix.tobytes())
-        
-        self.vao_aircraft.render()
 
     # NOTE: render() method removed - use begin_frame() / render_aircraft() / end_frame() pattern instead
-        
-    def render_instanced_aircraft(self, positions, directions, colors=None):
-        """
-        Render multiple aircraft using instancing.
-        Args:
-            positions: List or array of (N, 3) positions
-            directions: List or array of (N, 3) direction vectors (velocity/heading)
-            colors: Optional List or array of (N, 3) colors
-        """
-        count = len(positions)
-        if count == 0:
-            return
-        if count > self.max_instances:
-            print(f"Warning: Truncating instances {count} -> {self.max_instances}")
-            count = self.max_instances
-            positions = positions[:count]
-            directions = directions[:count]
-            if colors is not None:
-                colors = colors[:count]
-                
-        # Camera Uniforms
-        self.prog_instanced['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
-        self.prog_instanced['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
-        
-        # Prepare Instance Data
-        import pyrr
-        instance_data = np.zeros(count * 19, dtype='f4')
-        def_color = np.array([1.0, 0.0, 0.0], dtype='f4')
-        
-        for i in range(count):
-            pos = positions[i]
-            direction = np.array(directions[i])
-            length = np.linalg.norm(direction)
-            if length < 0.01:
-                direction = np.array([1.0, 0.0, 0.0])
-            else:
-                direction = direction / length
-            
-            # X=Forward, Y=Right, Z=Up (aligned)
-            up = np.array([0.0, 0.0, -1.0]) # Sim Up is -Z
-            if abs(np.dot(direction, up)) > 0.99:
-                right = np.array([0.0, 1.0, 0.0])
-            else:
-                right = np.cross(direction, up)
-                right = right / np.linalg.norm(right)
-            real_up = np.cross(right, direction)
-            
-            mat = np.eye(4, dtype='f4')
-            mat[0, :3] = direction
-            mat[1, :3] = right
-            mat[2, :3] = real_up 
-            mat[3, :3] = pos
-            
-            offset = i * 19
-            instance_data[offset:offset+16] = mat.flatten() 
-            col = colors[i] if colors is not None else def_color
-            instance_data[offset+16:offset+19] = col
-            
-        self.vbo_instance.write(instance_data.tobytes())
-        self.vao_aircraft_instanced.render(moderngl.TRIANGLES, instances=count)
 
     # --- ENVIRONMENT RENDERING ---
     
@@ -468,7 +371,7 @@ class GLRenderer:
         """
         from src.rendering.geometry import GeometryGenerator
         
-        # Terrain mesh oluştur
+        # Terrain mesh oluştur (base terrain for origin area)
         terrain = environment.terrain
         terrain_mesh = GeometryGenerator.create_terrain_mesh(
             terrain.heightmap,
@@ -489,6 +392,74 @@ class GLRenderer:
         
         # Environment referansını sakla
         self.environment = environment
+        
+        # Chunk rendering için callback'leri kaydet
+        if hasattr(environment, 'chunk_manager'):
+            environment.chunk_manager.on_chunk_loaded = self._on_chunk_loaded
+            environment.chunk_manager.on_chunk_unloaded = self._on_chunk_unloaded
+            self._chunk_vaos = {}  # {coords: vao}
+            self._chunk_vbos = {}  # {coords: vbo}
+    
+    def _on_chunk_loaded(self, chunk):
+        """Yeni chunk yüklendiğinde VAO oluştur"""
+        from src.rendering.geometry import GeometryGenerator
+        
+        # Chunk mesh oluştur
+        mesh = GeometryGenerator.create_terrain_mesh(
+            chunk.heightmap,
+            (chunk.chunk_size, chunk.chunk_size),
+            resolution=chunk.resolution
+        )
+        
+        vbo = self.ctx.buffer(mesh.tobytes())
+        vao = self.ctx.simple_vertex_array(
+            self.prog_terrain, vbo,
+            'in_position', 'in_normal', 'in_texcoord'
+        )
+        
+        self._chunk_vbos[chunk.coords] = vbo
+        self._chunk_vaos[chunk.coords] = vao
+        chunk.vao = vao
+        chunk.vertex_count = len(mesh) // 6
+    
+    def _on_chunk_unloaded(self, chunk):
+        """Chunk kaldırıldığında GPU kaynaklarını temizle"""
+        coords = chunk.coords
+        if coords in self._chunk_vaos:
+            self._chunk_vaos[coords].release()
+            del self._chunk_vaos[coords]
+        if coords in self._chunk_vbos:
+            self._chunk_vbos[coords].release()
+            del self._chunk_vbos[coords]
+        chunk.vao = None
+    
+    def render_terrain_chunks(self):
+        """Sonsuz dünya: Görünür chunk'ları render et"""
+        if not hasattr(self, 'environment') or not hasattr(self.environment, 'chunk_manager'):
+            return
+        
+        import pyrr
+        chunks = self.environment.chunk_manager.get_visible_chunks()
+        
+        for chunk in chunks:
+            if not chunk.vao:
+                continue
+            
+            # Her chunk için model matrisi (dünya pozisyonuna göre offset)
+            ox, oy = chunk.world_origin
+            model = np.eye(4, dtype='f4')
+            model[3, 0] = ox - 1000.0  # GL space: merkez (0,0)
+            model[3, 2] = oy - 1000.0
+            
+            self.prog_terrain['m_model'].write(model.tobytes())
+            self.prog_terrain['m_view'].write(self.camera.get_view_matrix().astype('f4').tobytes())
+            self.prog_terrain['m_proj'].write(self.camera.get_projection_matrix().astype('f4').tobytes())
+            self.prog_terrain['u_color'].value = (1.0, 1.0, 1.0)
+            
+            if 'viewPos' in self.prog_terrain:
+                self.prog_terrain['viewPos'].value = tuple(self.camera.position)
+            
+            chunk.vao.render()
         
     def _init_object_meshes(self):
         """Object mesh'lerini oluştur (building, tree)"""
@@ -657,7 +628,7 @@ class GLRenderer:
         
         # Render boundary markers
         for marker in self.arena.markers:
-            pos = marker['position']
+            pos = marker['position'] # [East, North, Alt]
             height = marker.get('height', 1.0)
             color = marker['color']
             marker_type = marker.get('type', 'corner_pole')
@@ -665,14 +636,19 @@ class GLRenderer:
             
             model = np.eye(4, dtype='f4')
             
+            # Coordinate Transform: Sim [x, y, z] -> GL [x, z, -y]
+            gl_x = pos[0]
+            gl_y = pos[2] # Altitude -> Up
+            gl_z = -pos[1] # North -> -Back
+            
             if marker_type == 'corner_pole':
                 # Cylinder pole
-                model[0, 0] = 1.0  # X scale (radius built into mesh, but we can scale if needed)
+                model[0, 0] = 1.0 
                 model[1, 1] = height 
                 model[2, 2] = 1.0 
-                model[3, 0] = pos[0]
-                model[3, 1] = pos[1] 
-                model[3, 2] = pos[2]
+                model[3, 0] = gl_x
+                model[3, 1] = gl_y
+                model[3, 2] = gl_z
                 
                 self.prog_aircraft['m_model'].write(model.tobytes())
                 self.prog_aircraft['u_color'].value = color
@@ -683,9 +659,9 @@ class GLRenderer:
                 model[0, 0] = 1.0 
                 model[1, 1] = height
                 model[2, 2] = 1.0
-                model[3, 0] = pos[0]
-                model[3, 1] = pos[1]
-                model[3, 2] = pos[2]
+                model[3, 0] = gl_x
+                model[3, 1] = gl_y
+                model[3, 2] = gl_z
                 
                 self.prog_aircraft['m_model'].write(model.tobytes())
                 self.prog_aircraft['u_color'].value = color
@@ -693,16 +669,13 @@ class GLRenderer:
                     self.vao_cone.render()
                     
             elif marker_type == 'helipad':
-                # Helipad ring
-                # Radius scaling: Mesh is radius 1.0 approx? Outer radius was 1.0 in geometry.py
-                # So scale X/Z by marker radius
                 scale = radius
                 model[0, 0] = scale
                 model[1, 1] = 1.0 
                 model[2, 2] = scale
-                model[3, 0] = pos[0]
-                model[3, 1] = pos[1]
-                model[3, 2] = pos[2]
+                model[3, 0] = gl_x
+                model[3, 1] = gl_y
+                model[3, 2] = gl_z
                 
                 self.prog_aircraft['m_model'].write(model.tobytes())
                 self.prog_aircraft['u_color'].value = color
@@ -711,17 +684,26 @@ class GLRenderer:
         
         # Render safe zone ground markers
         for zone in self.arena.safe_zones:
-            center = zone.center
-            size = zone.size
+            center = zone.center # [x, y, z]
+            size = zone.size # [width, depth, height]
             
-            # Model matrix: translate to zone center, scale to zone size
+            # GL Transform
+            gl_x = center[0]
+            gl_y = 0.5 # Ground level + offset
+            gl_z = -center[1] 
+            
+            # Scale mapped to Zone Size
+            # size[0] = Width (X)
+            # size[1] = Depth (Y)
+            # size[2] = Height (Z) -> ignored for ground marker
+            
             model = np.eye(4, dtype='f4')
             model[0, 0] = size[0]  # Width
-            model[1, 1] = 1.0  # Height (thin)
-            model[2, 2] = size[2]  # Depth
-            model[3, 0] = center[0]
-            model[3, 1] = 0.5  # Slightly above ground
-            model[3, 2] = center[2]
+            model[1, 1] = 1.0  # Thin
+            model[2, 2] = size[1]  # Depth (Sim Y mapped to GL Z)
+            model[3, 0] = gl_x
+            model[3, 1] = gl_y
+            model[3, 2] = gl_z
             
             self.prog_aircraft['m_model'].write(model.tobytes())
             self.prog_aircraft['u_color'].value = zone.color
@@ -732,18 +714,21 @@ class GLRenderer:
             for obj in self.arena.detail_objects:
                 pos = obj['position']
                 color = obj['color']
-                scale = obj.get('scale', (1.0, 1.0, 1.0))
+                scale = obj.get('scale', (1.0, 1.0, 1.0)) # [sx, sy, sz]
                 rotation = obj.get('rotation', 0.0)
                 obj_type = obj['type']
                 
-                model = np.eye(4, dtype='f4')
+                # Transform Scale: Sim [x, y, z] -> GL [x, z, y]
+                # Because Sim Y is Depth (GL Z), Sim Z is Height (GL Y)
+                gl_scale = [scale[0], scale[2], scale[1]]
                 
-                # Scale -> Rotate -> Translate
-                # Note: We use pyrr for easier matrix math if preferred, but simple numpy is also ok.
+                # Transform Pos
+                gl_pos = [pos[0], pos[2], -pos[1]]
+                
                 import pyrr
-                s_mat = pyrr.matrix44.create_from_scale(scale, dtype='f4')
+                s_mat = pyrr.matrix44.create_from_scale(gl_scale, dtype='f4')
                 r_mat = pyrr.matrix44.create_from_y_rotation(rotation, dtype='f4')
-                t_mat = pyrr.matrix44.create_from_translation(pos, dtype='f4')
+                t_mat = pyrr.matrix44.create_from_translation(gl_pos, dtype='f4')
                 
                 model = pyrr.matrix44.multiply(s_mat, r_mat)
                 model = pyrr.matrix44.multiply(model, t_mat)
@@ -782,6 +767,16 @@ class GLRenderer:
         self.tex_terrain = self.ctx.texture((size, size), 3, texture_data.tobytes())
         self.tex_terrain.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
         self.tex_terrain.build_mipmaps()
+    def _is_in_frustum(self, position, radius=50.0):
+        """Basit frustum culling: Obje kamera görüş alanında mı?"""
+        cam_pos = np.array(self.camera.position)
+        obj_pos = np.array(position)
+        distance = np.linalg.norm(obj_pos - cam_pos)
+        
+        # Çok uzaktaki objeleri atla (2km görüş mesafesi)
+        if distance > 2000.0 + radius:
+            return False
+        return True
     
     def render_world_objects(self, objects):
         """
@@ -804,6 +799,10 @@ class GLRenderer:
         ], dtype='f4')
         
         for obj in objects:
+            # Frustum culling
+            if not self._is_in_frustum(obj.position, max(obj.size)):
+                continue
+            
             # Object tipine göre VAO seç
             if obj.obj_type == 'building':
                 vao = self.vao_building
@@ -844,8 +843,13 @@ class GLRenderer:
         # 1. Skybox
         self.render_sky()
         
-        # 2. Terrain
-        self.render_terrain()
+        # 2. Terrain (Chunk-based veya static)
+        if hasattr(self, '_chunk_vaos') and self._chunk_vaos:
+            # Sonsuz dünya: Chunk'ları render et
+            self.render_terrain_chunks()
+        else:
+            # Static terrain (origin area)
+            self.render_terrain()
         
         # 3. Arena (poles, markers)
         if hasattr(self, 'arena'):
@@ -978,15 +982,14 @@ class GLRenderer:
         Oluşturulan görüntüyü CPU'ya (Numpy Array) geri okur.
         OpenCV (BGR) formatına dönüştürür.
         """
-        # Read from main framebuffer (before post-process)
-        # Post-process was causing terrain to disappear
-        
         # Use persistent buffer to avoid allocation
         expected_size = self.width * self.height * 3
         if not hasattr(self, '_read_buffer') or self._read_buffer.size != expected_size:
             self._read_buffer = np.empty((self.height, self.width, 3), dtype=np.uint8)
 
-        self.fbo.read_into(self._read_buffer, components=3, alignment=1)
+        # Read from post-processed FBO (includes bloom and other effects)
+        # If bloom is disabled, fbo_post still contains the final output
+        self.fbo_post.read_into(self._read_buffer, components=3, alignment=1)
         
         # Flip Y (OpenGL orijini sol alt, Image sol üst)
         # RGB -> BGR (OpenCV için)

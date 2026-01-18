@@ -19,18 +19,19 @@ class Zone:
     name: str
     min_x: float
     max_x: float
-    min_z: float
-    max_z: float
-    min_y: float = 0.0
-    max_y: float = 150.0
+    min_y: float  # North/South axis
+    max_y: float
+    min_z: float = 0.0  # Verticla axis (Altitude)
+    max_z: float = 150.0
     color: Tuple[float, float, float] = (0.5, 0.5, 0.5)
     
     def contains(self, position: np.ndarray) -> bool:
         """Check if a position is within this zone."""
+        # Simülasyon Coordinate System: X (East), Y (North), Z (Up)
         x, y, z = position[0], position[1], position[2]
         return (self.min_x <= x <= self.max_x and
-                self.min_z <= z <= self.max_z and
-                self.min_y <= y <= self.max_y)
+                self.min_y <= y <= self.max_y and
+                self.min_z <= z <= self.max_z)
     
     @property
     def center(self) -> np.ndarray:
@@ -43,7 +44,7 @@ class Zone:
     
     @property
     def size(self) -> Tuple[float, float, float]:
-        """Get size of the zone (width, height, depth)."""
+        """Get size of the zone (width, depth, height)."""
         return (
             self.max_x - self.min_x,
             self.max_y - self.min_y,
@@ -86,10 +87,10 @@ class TeknofestArena:
             name="Arena",
             min_x=-half_w,
             max_x=half_w,
-            min_z=-half_d,
-            max_z=half_d,
-            min_y=0.0,
-            max_y=self.max_altitude
+            min_y=-half_d,  # Depth -> Y axis
+            max_y=half_d,
+            min_z=0.0,      # Altitude -> Z axis
+            max_z=self.max_altitude
         )
         
         # Create safe zones (corners)
@@ -98,29 +99,29 @@ class TeknofestArena:
             Zone(
                 name="SafeZone_NW",
                 min_x=-half_w, max_x=-half_w + sz,
-                min_z=half_d - sz, max_z=half_d,
-                min_y=0.0, max_y=self.max_altitude,
+                min_y=half_d - sz, max_y=half_d,
+                min_z=0.0, max_z=self.max_altitude,
                 color=(0.2, 0.6, 0.2)  # Green
             ),
             Zone(
                 name="SafeZone_NE",
                 min_x=half_w - sz, max_x=half_w,
-                min_z=half_d - sz, max_z=half_d,
-                min_y=0.0, max_y=self.max_altitude,
+                min_y=half_d - sz, max_y=half_d,
+                min_z=0.0, max_z=self.max_altitude,
                 color=(0.2, 0.2, 0.6)  # Blue
             ),
             Zone(
                 name="SafeZone_SW",
                 min_x=-half_w, max_x=-half_w + sz,
-                min_z=-half_d, max_z=-half_d + sz,
-                min_y=0.0, max_y=self.max_altitude,
+                min_y=-half_d, max_y=-half_d + sz,
+                min_z=0.0, max_z=self.max_altitude,
                 color=(0.6, 0.6, 0.2)  # Yellow
             ),
             Zone(
                 name="SafeZone_SE",
                 min_x=half_w - sz, max_x=half_w,
-                min_z=-half_d, max_z=-half_d + sz,
-                min_y=0.0, max_y=self.max_altitude,
+                min_y=-half_d, max_y=-half_d + sz,
+                min_z=0.0, max_z=self.max_altitude,
                 color=(0.6, 0.2, 0.2)  # Red
             )
         ]
@@ -131,17 +132,18 @@ class TeknofestArena:
             name="CombatZone",
             min_x=-half_w + combat_margin,
             max_x=half_w - combat_margin,
-            min_z=-half_d + combat_margin,
-            max_z=half_d - combat_margin,
-            min_y=self.min_altitude,
-            max_y=self.max_altitude,
+            min_y=-half_d + combat_margin,
+            max_y=half_d - combat_margin,
+            min_z=self.min_altitude,
+            max_z=self.max_altitude,
             color=(0.8, 0.3, 0.3)  # Light red
         )
         
         # Spawn points for each team (in safe zones)
+        # Coordinate: [x, y, z] -> [East, North, Up]
         self.spawn_points = {
-            'team_a': np.array([-half_w + sz/2, 20.0, half_d - sz/2], dtype=np.float32),
-            'team_b': np.array([half_w - sz/2, 20.0, -half_d + sz/2], dtype=np.float32),
+            'team_a': np.array([-half_w + sz/2, half_d - sz/2, 20.0], dtype=np.float32),
+            'team_b': np.array([half_w - sz/2, -half_d + sz/2, 20.0], dtype=np.float32),
         }
         
         # Boundary markers (poles at corners and edges)
@@ -161,48 +163,48 @@ class TeknofestArena:
         # NW Safe Zone (Team A-ish)
         details.append({
             'type': 'tent',
-            'position': np.array([-half_w + 10, 0, half_d - 15], dtype=np.float32),
+            'position': np.array([-half_w + 10, half_d - 15, 0], dtype=np.float32),
             'rotation': 0.0,
             'color': (0.8, 0.8, 0.8), # White tent
-            'scale': (4.0, 3.0, 6.0)
+            'scale': (4.0, 6.0, 3.0)  # Width, Depth, Height
         })
         details.append({
             'type': 'box',
-            'position': np.array([-half_w + 15, 0, half_d - 10], dtype=np.float32),
+            'position': np.array([-half_w + 15, half_d - 10, 0], dtype=np.float32),
             'rotation': 0.5,
             'color': (0.4, 0.4, 0.5), # Blue container
-            'scale': (2.4, 2.6, 6.0)
+            'scale': (2.4, 6.0, 2.6)
         })
 
         # NE Safe Zone
         details.append({
             'type': 'tent',
-            'position': np.array([half_w - 15, 0, half_d - 10], dtype=np.float32),
+            'position': np.array([half_w - 15, half_d - 10, 0], dtype=np.float32),
             'rotation': 1.57, # 90 degrees
             'color': (0.2, 0.2, 0.7), # Blue tent
-            'scale': (4.0, 3.0, 6.0)
+            'scale': (4.0, 6.0, 3.0)
         })
         
         # SW Safe Zone (Team B-ish)
         details.append({
             'type': 'tent',
-            'position': np.array([-half_w + 15, 0, -half_d + 10], dtype=np.float32),
+            'position': np.array([-half_w + 15, -half_d + 10, 0], dtype=np.float32),
             'rotation': 0.0,
             'color': (0.7, 0.2, 0.2), # Red tent
-            'scale': (4.0, 3.0, 6.0)
+            'scale': (4.0, 6.0, 3.0)
         })
         
         # SE Safe Zone
         details.append({
             'type': 'tent',
-            'position': np.array([half_w - 10, 0, -half_d + 15], dtype=np.float32),
+            'position': np.array([half_w - 10, -half_d + 15, 0], dtype=np.float32),
             'rotation': 1.57,
             'color': (0.7, 0.7, 0.2), # Yellow tent
-            'scale': (4.0, 3.0, 6.0)
+            'scale': (4.0, 6.0, 3.0)
         })
         details.append({
             'type': 'box',
-            'position': np.array([half_w - 20, 0, -half_d + 10], dtype=np.float32),
+            'position': np.array([half_w - 20, -half_d + 10, 0], dtype=np.float32),
             'rotation': -0.3,
             'color': (0.5, 0.5, 0.5), # Grey box
             'scale': (2.0, 2.0, 2.0)
@@ -224,10 +226,10 @@ class TeknofestArena:
             (half_w, half_d),
         ]
         
-        for x, z in corners:
+        for x, y in corners:
             markers.append({
                 'type': 'corner_pole',
-                'position': np.array([x, 0, z], dtype=np.float32),
+                'position': np.array([x, y, 0], dtype=np.float32),
                 'height': 30.0,
                 'color': (1.0, 0.0, 0.0),  # Red
                 'radius': 0.5
@@ -240,9 +242,11 @@ class TeknofestArena:
             coords = np.arange(start + spacing, end, spacing)
             for val in coords:
                 if axis == 'x':
-                    pos = np.array([val, 0, constant_coord], dtype=np.float32)
+                    # Vary X, constant Y (depth)
+                    pos = np.array([val, constant_coord, 0], dtype=np.float32)
                 else:
-                    pos = np.array([constant_coord, 0, val], dtype=np.float32)
+                    # Vary Y (depth), constant X
+                    pos = np.array([constant_coord, val, 0], dtype=np.float32)
                 
                 markers.append({
                     'type': 'cone',
@@ -257,8 +261,8 @@ class TeknofestArena:
         add_cones(-half_w, half_w, half_d, axis='x')
         
         # East and West edges
-        add_cones(-half_d, half_d, -half_w, axis='z')
-        add_cones(-half_d, half_d, half_w, axis='z')
+        add_cones(-half_d, half_d, -half_w, axis='y')
+        add_cones(-half_d, half_d, half_w, axis='y')
         
         # Helipads in Safe Zones (Rings)
         # NW Safe Zone (Team A)
@@ -279,7 +283,7 @@ class TeknofestArena:
         
         # SW Safe Zone
         sz = self.safe_zone_size
-        pos_sw = np.array([-half_w + sz/2, 0.2, -half_d + sz/2], dtype=np.float32)
+        pos_sw = np.array([-half_w + sz/2, -half_d + sz/2, 0.2], dtype=np.float32)
         markers.append({
             'type': 'helipad',
             'position': pos_sw,
@@ -288,7 +292,7 @@ class TeknofestArena:
         })
         
         # NE Safe Zone
-        pos_ne = np.array([half_w - sz/2, 0.2, half_d - sz/2], dtype=np.float32)
+        pos_ne = np.array([half_w - sz/2, half_d - sz/2, 0.2], dtype=np.float32)
         markers.append({
             'type': 'helipad',
             'position': pos_ne,
@@ -296,10 +300,11 @@ class TeknofestArena:
             'color': (1.0, 1.0, 1.0)
         })
         
-        # Ensure helipad marking Y is near ground
+        # Ensure helipad marking Z is near ground
         for m in markers:
             if m['type'] == 'helipad':
-                m['position'][1] = 0.2
+                # Spawn points might have Z=20, correct to ground level
+                m['position'][2] = 0.2
         
         return markers
     
@@ -334,10 +339,11 @@ class TeknofestArena:
     
     def check_altitude_violation(self, position: np.ndarray) -> Optional[str]:
         """Check if altitude is within limits. Returns violation type or None."""
-        y = position[1]
-        if y < self.min_altitude:
+        # Simulation Z-Up: Altitude is Z axis
+        z = position[2]
+        if z < self.min_altitude:
             return "TOO_LOW"
-        if y > self.max_altitude:
+        if z > self.max_altitude:
             return "TOO_HIGH"
         return None
     

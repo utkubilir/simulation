@@ -118,58 +118,50 @@ class WorldMap:
     def get_terrain_height(x: float, y: float) -> float:
         """
         Belirtilen koordinattaki zemin yüksekliğini döndürür.
-        Hem heightmap gürültüsünü hem de ekstra dağ nesnelerini hesaba katar.
+        SONSUZ KOORDİNAT DESTEKLİ: Her koordinat için tutarlı yükseklik üretir.
         """
-        # 0..2000 -> -1000..1000 dönüşümü (Eski algoritma ile uyum için)
-        x_orig = x - 1000.0
-        y_orig = y - 1000.0
-
-        # 1. Base Noise Height
-        # Merkeze (Pist alanı) yakınsa düzleştir
-        # Pist merkezi (1500, 1500) -> x_orig (500, 500)
-        dist_runway = np.sqrt((x_orig - 500)**2 + (y_orig - 500)**2)
-
+        # Pist merkezi (1500, 1500) etrafındaki alan düz olmalı
+        RUNWAY_CENTER_X, RUNWAY_CENTER_Y = 1500.0, 1500.0
+        dist_runway = np.sqrt((x - RUNWAY_CENTER_X)**2 + (y - RUNWAY_CENTER_Y)**2)
+        
         if dist_runway < 300:
             base_h = 0.0
         else:
-            # Perlin Noise
-            base_h = WorldMap._perlin_noise(x_orig, y_orig) * 30
-            base_h += WorldMap._perlin_noise(x_orig * 2, y_orig * 2, seed=123) * 15
-
-            # Kenarlara doğru yükselt (Edge distance logic)
-            # dist_edge hesabı -1000..1000 sınırlarına göre
-            dist_edge = min(abs(x_orig + 1000), abs(x_orig - 1000),
-                            abs(y_orig + 1000), abs(y_orig - 1000))
-            if dist_edge < 400:
-                base_h += (400 - dist_edge) * 0.15
+            # Perlin Noise - sonsuz koordinatlar için çalışır
+            # Offset ekleyerek negatif değerleri pozitife çeviriyoruz
+            noise = WorldMap._perlin_noise(x, y) * 30
+            noise += WorldMap._perlin_noise(x * 2, y * 2, seed=123) * 15
+            base_h = noise + 25  # Offset: Temel zemin seviyesi
+            
+            # Pist etrafında yükselme efekti (sadece orijin bölgesinde)
+            if 0 <= x <= 2000 and 0 <= y <= 2000:
+                x_orig = x - 1000.0
+                y_orig = y - 1000.0
+                dist_edge = min(abs(x_orig + 1000), abs(x_orig - 1000),
+                                abs(y_orig + 1000), abs(y_orig - 1000))
+                if dist_edge < 400:
+                    base_h += (400 - dist_edge) * 0.15
 
         base_h = max(0.0, base_h)
 
-        # 2. Cone Mountains Height
-        # Statik objelerden "mountain_cone" olanları kontrol et
+        # Dağlar (sadece orijin bölgesinde)
         max_cone_h = 0.0
+        if 0 <= x <= 2000 and 0 <= y <= 2000:
+            if not WorldMap.STATIC_OBJECTS:
+                WorldMap._init_static_objects()
 
-        # Performance optimization: Harcoded check instead of looping all objects
-        # Or just loop, there are only 5 mountains.
-        if not WorldMap.STATIC_OBJECTS:
-             WorldMap._init_static_objects()
+            for obj in WorldMap.STATIC_OBJECTS:
+                if obj.obj_type == "mountain_cone":
+                    dx = x - obj.position[0]
+                    dy = y - obj.position[1]
+                    dist = np.sqrt(dx*dx + dy*dy)
+                    r = obj.meta['radius']
+                    h = obj.meta['height']
 
-        for obj in WorldMap.STATIC_OBJECTS:
-            if obj.obj_type == "mountain_cone":
-                # Koni formülü: h * (1 - dist/radius)
-                dx = x - obj.position[0]
-                dy = y - obj.position[1]
-                dist = np.sqrt(dx*dx + dy*dy)
-                r = obj.meta['radius']
-                h = obj.meta['height']
-
-                if dist < r:
-                    cone_h = h * (1.0 - dist / r)
-                    # Simple noise on cone to match visual
-                    # noise = np.sin(angle * 5 + z * 0.1) * radius * 0.1
-                    # İhmal edilebilir fizik için
-                    if cone_h > max_cone_h:
-                        max_cone_h = cone_h
+                    if dist < r:
+                        cone_h = h * (1.0 - dist / r)
+                        if cone_h > max_cone_h:
+                            max_cone_h = cone_h
 
         return max(base_h, max_cone_h)
 

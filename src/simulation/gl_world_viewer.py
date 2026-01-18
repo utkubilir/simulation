@@ -1,3 +1,4 @@
+
 """
 OpenGL-based 3D world viewer integrated with the simulation.
 
@@ -52,7 +53,9 @@ class GLWorldViewer:
     @staticmethod
     def _sim_to_gl(position: np.ndarray) -> np.ndarray:
         """Map sim coords (x, y, z-alt) -> GL coords (x, y-up, z-depth)."""
-        return np.array([position[0], position[2], position[1]], dtype=np.float32)
+        # Sim Y (North) maps to GL -Z (Forward)
+        # Sim Z (Altitude) maps to GL Y (Up)
+        return np.array([position[0], position[2], -position[1]], dtype=np.float32)
 
     def _select_target(self, world_state: Dict[str, Any], target_id: Optional[str]) -> Optional[Dict[str, Any]]:
         uavs = world_state.get("uavs", {})
@@ -105,13 +108,18 @@ class GLWorldViewer:
                 color = (0.9, 0.2, 0.2)
             else:
                 color = (0.8, 0.8, 0.8)
-
+            
+            # Rotation Mapping for Y-Up World (GL)
+            # Sim Z-Up -> GL Y-Up
+            # Heading -> Y-axis rot (-yaw)
+            # Pitch -> X-axis rot
+            # Roll -> Z-axis rot
+            
             self.renderer.render_aircraft(
                 position=gl_pos,
-
-                heading=yaw,
-                roll=roll,
-                pitch=pitch,
+                heading=roll,       # Map Roll to Z-rotation
+                roll=pitch,         # Map Pitch to X-rotation
+                pitch=-yaw,         # Map -Yaw to Y-rotation
                 color=color,
                 program=program,
             )
@@ -130,7 +138,8 @@ class GLWorldViewer:
         self._render_uavs(world_state)
         self.renderer.end_frame()
 
-        buffer = self.renderer.fbo.read(components=3, alignment=1)
-        frame = np.frombuffer(buffer, dtype=np.uint8).reshape((self.height, self.width, 3))
-        frame = np.flipud(frame)
+        # Use read_pixels() for consistent Y-flip and color handling
+        frame = self.renderer.read_pixels()
+        # read_pixels() returns BGR, convert back to RGB for UI rendering
+        frame = frame[:, :, ::-1].copy()
         return frame

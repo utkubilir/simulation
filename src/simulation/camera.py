@@ -108,6 +108,11 @@ class FixedCamera:
         # Negatif = aşağı bakış (daha büyük negatif = daha fazla aşağı)
         self.mount_pitch = np.radians(config.get('mount_pitch', -30.0))
         
+        # Horizon-lock stabilization: Kamera UAV pitch'ini ne kadar takip etsin?
+        # 0.0 = tamamen stabil (horizon-lock), 1.0 = tamamen UAV'ye bağlı
+        # 0.3 = UAV pitch'in %30'unu takip eder (önerilen)
+        self.pitch_follow_factor = config.get('pitch_follow_factor', 0.3)
+        
         # Lens distorsiyon parametreleri (Brown-Conrady model)
         self.distortion_enabled = config.get('distortion_enabled', True)
         self.k1 = config.get('k1', -0.1)   # Radyal distorsiyon (barrel < 0, pincushion > 0)
@@ -424,9 +429,12 @@ class FixedCamera:
         # Kamera pozisyonu: İHA pozisyonu + döndürülmüş offset
         camera_pos = uav_position + R_uav @ self.mount_offset
         
-        # Kamera oryantasyonu: İHA oryantasyonu + montaj açısı + sarsıntı
-        camera_roll = roll
-        camera_pitch = pitch + self.mount_pitch + self._shake_offset[0]
+        # Kamera oryantasyonu: montaj açısı + horizon-stabilized pitch + sarsıntı
+        # Horizon-lock: UAV pitch'ini sadece kısmen takip et (yukarı-aşağı yalpalamayı azaltır)
+        stabilized_pitch = pitch * self.pitch_follow_factor
+        
+        camera_roll = roll * self.pitch_follow_factor  # Roll da stabilize
+        camera_pitch = stabilized_pitch + self.mount_pitch + self._shake_offset[0]
         camera_yaw = yaw + self._shake_offset[1]
         
         camera_orient = np.array([camera_roll, camera_pitch, camera_yaw])
@@ -768,23 +776,26 @@ class FixedCamera:
             # 1. Kamera Güncelle (environment rendering için önce yapılmalı)
 
             # Orientation Mapping for GLCamera
-            # Sim (NED): [Roll, Pitch, Yaw]
-            # GLCamera expects inputs that map to: Input0->Pitch(X-rot), Input1->Yaw(Y-rot), Input2->Roll(Z-rot)
-            # Mapping:
-            #   GL Input 0 <= Sim Pitch
-            #   GL Input 1 <= -Sim Yaw (CW vs CCW)
-            #   GL Input 2 <= -Sim Roll (CW vs CCW)
-
+            # Sim (NED/Z-Up): [Roll, Pitch, Yaw]
+            # GL (Y-Up): [Pitch, Yaw, Roll] -> Actually [Pitch, -Yaw, -Roll] for correct looking
+            
             sim_roll = camera_orient[0]
             sim_pitch = camera_orient[1]
             sim_yaw = camera_orient[2]
 
             # [Pitch, Yaw, Roll] for GLCamera
+            # Note: GLCamera update_camera implementation details matter.
+            # Assuming standard Y-Up LookAt.
             gl_orient = np.array([sim_pitch, -sim_yaw, -sim_roll], dtype=np.float32)
             
             # Coordinate Swap for GL (Sim Z=Altitude -> GL Y=Up)
-            # Sim: [X, Y, Altitude] -> GL: [X, Altitude, Y]
-            gl_camera_pos = np.array([camera_pos[0], camera_pos[2], camera_pos[1]], dtype=np.float32)
+            # Sim: [X, Y, Altitude] -> GL: [X, Altitude, -Y] (North is -Z in GL)
+            # REMOVED -1000 OFFSET (Infinite World Support)
+            gl_camera_pos = np.array([
+                camera_pos[0],      # X
+                camera_pos[2],      # Z (Altitude) -> Y (Up)
+                -camera_pos[1]      # Y (North) -> -Z (Forward/Back)
+            ], dtype=np.float32)
 
             self.renderer.update_camera(position=gl_camera_pos, rotation=gl_orient)
             
@@ -810,14 +821,85 @@ class FixedCamera:
                 roll = np.radians(uav.get('roll', 0.0))
                 pitch = np.radians(uav.get('pitch', 0.0))
                 
+                # Coordinate Transform for Render Aircraft (Sim -> GL)
+                # Position: [x, alt, -north]
+                gl_uav_pos = np.array([pos[0], pos[2], -pos[1]], dtype=np.float32)
+                
+                # Rotation:
+                # Sim Heading (Z-Rot) -> GL Yaw (Y-Rot)
+                # Sim Pitch (Y-Rot?? or X) -> GL Pitch (X-Rot)
+                # Aircraft model alignment matters.
+                # Assuming Aircraft Mesh is Y-Up (Nose -Z, Up Y, Right X)
+                # Just passing sim angles might be wrong if render_aircraft uses them as Z-Y-X euler.
+                # render_aircraft uses: rot_z(heading) * rot_y(pitch) * rot_x(roll)
+                # If we want standard GL behavior:
+                # Heading -> Y Axis Rotation
+                # Pitch -> X Axis Rotation
+                # Roll -> Z Axis Rotation
+                
+                # But render_aircraft implementation: create_from_z_rotation(heading).
+                # This means it rotates around Z. In GL, rotating around Z is ROLL.
+                # So render_aircraft expects Z-Up inputs or is written for Z-Up world.
+                # Since we are converting world to Y-Up (GL standard), we must adapt.
+                
+                # Correct Mapping for GL Y-Up World:
+                # We need to construct the matrix ourselves or modify render_aircraft params.
+                # Let's map inputs to render_aircraft so they produce correct rotation.
+                # If render_aircraft does: Z_rot(p1) * Y_rot(p2) * X_rot(p3)
+                # We want: Y_rot(heading) * X_rot(pitch) * Z_rot(roll)
+                
+                # So:
+                # p1 (Z_rot in func) <= Roll
+                # p2 (Y_rot in func) <= Heading
+                # p3 (X_rot in func) <= Pitch
+                
+                # Let's verify render_aircraft code:
+                # rot_r = create_from_x_rotation(roll)
+                # rot_p = create_from_y_rotation(pitch)
+                # rot_y = create_from_z_rotation(heading)
+                # rot = rot_y * rot_p * rot_r
+                
+                # If we assume GL World (Y-Up):
+                # Aircraft Heading is Y-rotation. So 'heading' arg in func should be mapped to Y-rot.
+                # Func maps 'pitch' arg to Y-rot. So we pass heading as pitch.
+                
+                # BUT wait, create_from_y_rotation is Pitch?
+                # Usually Pitch is X-rotation.
+                
+                # Let's Assume the aircraft mesh is aligned for Z-Up (Nose X, Left Y, Up Z).
+                # Then Z-rotation is Heading.
+                # If we render this mesh in Y-Up GL world:
+                # We need to rotate the mesh -90 on X to make Z up.
+                # OR we continue using Z-Up logic but provide Y-Up view matrix.
+                
+                # Since we converted Camera Position to Y-Up (gl_camera_pos), we effectively moved to Y-Up world.
+                # So we must draw aircraft in Y-Up.
+                # Position is converted: gl_uav_pos.
+                # Orientation:
+                # Heading (Sim Z) -> should be GL Y (-Heading because Y-Up vs Z-Up chirality?)
+                # We need to swap args to render_aircraft to make it utilize axes correctly.
+                
+                # Render Aircraft Inputs: (pos, heading, roll, pitch)
+                # It does: Z_rot(heading) * Y_rot(pitch) * X_rot(roll)
+                
+                # We Want: Y_rot(-heading) * X_rot(pitch) * Z_rot(roll)
+                # (Assuming standard Plane orientation: Nose -Z)
+                
+                # Mapping:
+                # Func Heading (Z-Rot) <= Roll
+                # Func Pitch (Y-Rot)   <= -Heading
+                # Func Roll (X-Rot)    <= Pitch
+                
+                # Let's try this mapping.
+                
                 # Renk: Player (Kırmızı), Enemy (Mavi)
                 color = (1.0, 0.0, 0.0) if uav.get('is_player', False) else (0.0, 0.0, 1.0)
                 
                 self.renderer.render_aircraft(
-                    position=pos,
-                    heading=heading,
-                    roll=roll,
-                    pitch=pitch,
+                    position=gl_uav_pos,
+                    heading=roll,       # Map Roll to Z-Rot
+                    roll=pitch,         # Map Pitch to X-Rot
+                    pitch=-heading,     # Map -Heading to Y-Rot
                     color=color
                 )
             

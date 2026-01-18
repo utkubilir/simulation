@@ -507,6 +507,11 @@ class SimulationRunner:
 
         # World update (advance even if player has crashed)
         self.world.update(dt)
+        
+        # Infinite world: Update terrain chunks based on player position
+        if player and hasattr(self.world, 'environment') and hasattr(self.world.environment, 'update_chunks'):
+            pos = player.get_position()
+            self.world.environment.update_chunks(pos[0], pos[1])
 
         if not player or player.is_crashed:
             return
@@ -685,7 +690,7 @@ class SimulationRunner:
         if self.gl_viewer and (use_gl_world or use_gl_inset):
             gl_frame = self.gl_viewer.render(world_state, target_id=self.camera_target_id)
             if use_gl_inset:
-                inset_frame = gl_frame[..., ::-1].copy()
+                inset_frame = gl_frame.copy()  # Already in RGB format
             if not use_gl_world:
                 gl_frame = None
         if self.gl_viewer and self.renderer.show_gl_world:

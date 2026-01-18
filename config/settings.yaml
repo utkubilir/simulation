@@ -55,7 +55,7 @@ camera:
   
   # Sabit montaj (Gimbal YOK - kamera İHA'ya sabit)
   mount_offset: [0.3, 0.0, -0.1]  # İHA'ya göre [ileri, sağ, aşağı] metre
-  mount_pitch: -5.0              # Aşağı bakış açısı (derece)
+  mount_pitch: -30.0             # Aşağı bakış açısı (derece) - arazi görünmesi için
   
   # Lens distorsiyon
   distortion_enabled: true
